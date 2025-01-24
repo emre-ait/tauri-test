@@ -1,3 +1,3 @@
 <template>
-	<span>Home</span>
+	<span>R.I.P Home Page</span>
 </template>
