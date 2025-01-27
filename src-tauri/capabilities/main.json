@@ -1,0 +1,21 @@
+{
+    "$schema": "./schemas/desktop-schema.json",
+    "identifier": "main-capability",
+    "description": "Capability for the main window",
+    "windows": ["main"],
+    "permissions": [
+        "core:path:default",
+        "core:event:default",
+        "core:window:default",
+        "core:app:default",
+        "core:resources:default",
+        "core:menu:default",
+        "core:tray:default",
+        "core:window:allow-set-title",
+        "dialog:allow-open",
+        "fs:allow-read-file",
+        "fs:read-files",
+        "fs:allow-home-read",
+        "fs:allow-download-read"
+    ]
+} 

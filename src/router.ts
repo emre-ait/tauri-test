@@ -1,6 +1,7 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
+import SnakeGame from './components/SnakeGame.vue'
 
-const routes: Array<any> = [
+const routes: RouteRecordRaw[] = [
 	{
 		path: '/',
 		name: 'home',
@@ -12,9 +13,19 @@ const routes: Array<any> = [
 			},
 		],
 	},
-];
+	{
+		path: '/snake',
+		name: 'snake',
+		component: SnakeGame,
+	},
+	{
+		path: '/pdf-viewer',
+		name: 'pdf-viewer',
+		component: () => import('./pages/PdfViewer.vue'),
+	},
+]
 
 export const router = createRouter({
 	history: createWebHistory(),
 	routes,
-});
+})

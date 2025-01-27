@@ -28,7 +28,7 @@ const appWindow = getCurrentWindow()
 </script>
 
 <style scoped>
-@reference "tailwindcss/theme";
+@import "tailwindcss/theme";
 
 .titlebar {
 	@apply bg-zinc-800 flex items-center justify-between select-none;
