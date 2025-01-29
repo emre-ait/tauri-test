@@ -40,14 +40,21 @@ const PIXELS_PER_CM = 10
 const isPanning = ref(false)
 const isSpacePressed = ref(false)
 const viewerRef = ref<HTMLElement | null>(null)
-const panStart = ref({ x: 0, y: 0 })
+const panStart = ref({ x: 0, y: 0, scrollLeft: 0, scrollTop: 0 })
 const isFileMenuOpen = ref(false)
 const fileMenuRef = ref<HTMLElement | null>(null)
 const arrangeGap = ref(1) // Default 1cm gap
+const position = ref({ x: 0, y: 0 })
+
+// Add these refs
+const snapThreshold = ref(0.5) // 0.5cm snap threshold
+const isSnapping = ref(false)
+const snapGuides = ref({ vertical: null as number | null, horizontal: null as number | null })
 
 function updateSurfaceDimensions(width: number, height: number) {
-	surfaceWidth.value = Math.max(10, Math.min(1000, width)) // min 10cm, max 1000cm
-	surfaceHeight.value = Math.max(10, Math.min(1000, height)) // min 10cm, max 1000cm
+	surfaceWidth.value = Math.max(10, Math.min(1000, width))
+	surfaceHeight.value = Math.max(10, Math.min(1000, height))
+	centerSurface()
 }
 
 function cmToPixels(cm: number): number {
@@ -111,9 +118,88 @@ function handleMouseMove(e: MouseEvent) {
 		const newX = pixelsToCm(e.clientX - startPos.value.x) / zoom.value
 		const newY = pixelsToCm(e.clientY - startPos.value.y) / zoom.value
 
+		// Reset snap guides
+		snapGuides.value = { vertical: null, horizontal: null }
+		let hasSnapped = false
+		let snappedX = newX
+		let snappedY = newY
+
+		images.value.forEach((otherImage, index) => {
+			if (index === draggedImageIndex.value) return
+
+			// Vertical alignments (X-axis)
+			const currentLeft = newX
+			const currentRight = newX + image.width
+			const currentCenterX = newX + image.width/2
+			
+			const otherLeft = otherImage.position.x
+			const otherRight = otherImage.position.x + otherImage.width
+			const otherCenterX = otherImage.position.x + otherImage.width/2
+
+			// Check all possible vertical alignments
+			const verticalAlignments = [
+				{ pos: currentLeft, target: otherLeft }, // Left to Left
+				{ pos: currentLeft, target: otherRight }, // Left to Right
+				{ pos: currentLeft, target: otherCenterX }, // Left to Center
+				{ pos: currentRight, target: otherLeft }, // Right to Left
+				{ pos: currentRight, target: otherRight }, // Right to Right
+				{ pos: currentRight, target: otherCenterX }, // Right to Center
+				{ pos: currentCenterX, target: otherLeft }, // Center to Left
+				{ pos: currentCenterX, target: otherRight }, // Center to Right
+				{ pos: currentCenterX, target: otherCenterX }, // Center to Center
+			]
+
+			for (const align of verticalAlignments) {
+				if (Math.abs(align.pos - align.target) < snapThreshold.value) {
+					hasSnapped = true
+					snapGuides.value.vertical = align.target
+					// Calculate the offset to align the edges
+					const offset = align.pos - currentLeft
+					snappedX = align.target - offset
+					break
+				}
+			}
+
+			// Horizontal alignments (Y-axis)
+			const currentTop = newY
+			const currentBottom = newY + image.height
+			const currentCenterY = newY + image.height/2
+			
+			const otherTop = otherImage.position.y
+			const otherBottom = otherImage.position.y + otherImage.height
+			const otherCenterY = otherImage.position.y + otherImage.height/2
+
+			// Check all possible horizontal alignments
+			const horizontalAlignments = [
+				{ pos: currentTop, target: otherTop }, // Top to Top
+				{ pos: currentTop, target: otherBottom }, // Top to Bottom
+				{ pos: currentTop, target: otherCenterY }, // Top to Center
+				{ pos: currentBottom, target: otherTop }, // Bottom to Top
+				{ pos: currentBottom, target: otherBottom }, // Bottom to Bottom
+				{ pos: currentBottom, target: otherCenterY }, // Bottom to Center
+				{ pos: currentCenterY, target: otherTop }, // Center to Top
+				{ pos: currentCenterY, target: otherBottom }, // Center to Bottom
+				{ pos: currentCenterY, target: otherCenterY }, // Center to Center
+			]
+
+			for (const align of horizontalAlignments) {
+				if (Math.abs(align.pos - align.target) < snapThreshold.value) {
+					hasSnapped = true
+					snapGuides.value.horizontal = align.target
+					// Calculate the offset to align the edges
+					const offset = align.pos - currentTop
+					snappedY = align.target - offset
+					break
+				}
+			}
+		})
+
+		isSnapping.value = hasSnapped
+
+		// Apply constrained position
 		image.position = {
-			x: Math.max(0, Math.min(surfaceWidth.value - image.width, newX)),
-			y: Math.max(0, Math.min(surfaceHeight.value - image.height, newY)),
+			x: Math.max(0, Math.min(surfaceWidth.value - image.width, hasSnapped ? snappedX : newX)),
+			y: Math.max(0, Math.min(surfaceHeight.value - image.height, hasSnapped ? snappedY : newY))
 		}
 	}
 }
@@ -124,6 +210,8 @@ function handleMouseUp() {
 	}
 	isDragging.value = false
 	draggedImageIndex.value = -1
+	isSnapping.value = false
+	snapGuides.value = { vertical: null, horizontal: null }
 }
 
 function rotateLeft(index: number) {
@@ -135,6 +223,9 @@ function rotateRight(index: number) {
 }
 
 function handleMouseDown(e: MouseEvent, index: number) {
+	// Only allow left click for image dragging
+	if (e.button !== 0 || isSpacePressed.value) return
+	
 	isDragging.value = true
 	draggedImageIndex.value = index
 	selectedImageIndex.value = index
@@ -334,30 +425,28 @@ function handleWheel(e: WheelEvent) {
 	if (e.ctrlKey || e.metaKey) {
 		e.preventDefault()
 		
-		const container = viewerRef.value
-		if (!container) return
+		const rect = viewerRef.value?.getBoundingClientRect()
+		if (!rect) return
 
-		const rect = container.getBoundingClientRect()
-		const containerCenterX = rect.left + rect.width / 2
-
-		// Get mouse position relative to container center (x) and top (y)
-		const mouseX = e.clientX - containerCenterX + container.scrollLeft
-		const mouseY = e.clientY - rect.top + container.scrollTop
-
-		// Calculate zoom
+		// Calculate new zoom
 		const delta = -Math.sign(e.deltaY) * 0.1
 		const newZoom = Math.max(minZoom, Math.min(maxZoom, zoom.value + delta))
 		
 		if (newZoom !== zoom.value) {
-			// Calculate scaling factor
-			const scale = newZoom / zoom.value
-			
+			// Get the center of the container (horizontally only)
+			const containerCenterX = rect.width / 2
+
+			// Get the surface center relative to container before zoom (horizontally only)
+			const surfaceCenterX = (containerCenterX - position.value.x) / zoom.value
+
 			// Update zoom
 			zoom.value = newZoom
 
-			// Adjust scroll position to keep mouse point fixed
-			container.scrollLeft = mouseX * scale - (e.clientX - containerCenterX)
-			container.scrollTop = mouseY * scale - (e.clientY - rect.top)
+			// Update position to keep surface centered horizontally only
+			position.value = {
+				x: containerCenterX - surfaceCenterX * newZoom,
+				y: position.value.y // Keep vertical position unchanged
+			}
 		}
 	}
 }
@@ -414,6 +503,11 @@ function handleKeyDown(e: KeyboardEvent) {
 					sendToBack(selectedImageIndex.value)
 				}
 				break
+			case 'KeyT':
+				if (images.length > 0) {
+					arrangeAsTable()
+				}
+				break
 		}
 	}
 }
@@ -425,21 +519,22 @@ function handleKeyUp(e: KeyboardEvent) {
 }
 
 function handleViewerMouseDown(e: MouseEvent) {
-	// Middle mouse button (button 1) or left click + space
 	if (e.button === 1 || (e.button === 0 && isSpacePressed.value)) {
 		e.preventDefault()
 		isPanning.value = true
 		panStart.value = {
-			x: e.clientX + (viewerRef.value?.scrollLeft || 0),
-			y: e.clientY + (viewerRef.value?.scrollTop || 0),
+			x: e.clientX - position.value.x,
+			y: e.clientY - position.value.y
 		}
 	}
 }
 
 function handleViewerMouseMove(e: MouseEvent) {
-	if (isPanning.value && viewerRef.value) {
-		viewerRef.value.scrollLeft = panStart.value.x - e.clientX
-		viewerRef.value.scrollTop = panStart.value.y - e.clientY
+	if (isPanning.value) {
+		position.value = {
+			x: e.clientX - panStart.value.x,
+			y: e.clientY - panStart.value.y
+		}
 	}
 }
 
@@ -533,10 +628,7 @@ function clearAllImages() {
 
 function resetView() {
 	zoom.value = 1
-	if (viewerRef.value) {
-		viewerRef.value.scrollLeft = 0
-		viewerRef.value.scrollTop = 0
-	}
+	centerSurface()
 }
 
 function bringToFront(index: number) {
@@ -640,6 +732,40 @@ function handleClickOutside(e: MouseEvent) {
 	}
 }
 
+// Add new table function
+function arrangeAsTable() {
+	if (images.value.length === 0) return
+
+	// Calculate optimal grid dimensions
+	const count = images.value.length
+	const aspectRatio = surfaceWidth.value / surfaceHeight.value
+	const cols = Math.ceil(Math.sqrt(count * aspectRatio))
+	const rows = Math.ceil(count / cols)
+
+	// Calculate cell dimensions with gaps
+	const totalGapWidthSpace = arrangeGap.value * (cols - 1)
+	const totalGapHeightSpace = arrangeGap.value * (rows - 1)
+	const cellWidth = (surfaceWidth.value - totalGapWidthSpace) / cols
+	const cellHeight = (surfaceHeight.value - totalGapHeightSpace) / rows
+
+	// Arrange images in grid
+	images.value.forEach((image, index) => {
+		const row = Math.floor(index / cols)
+		const col = index % cols
+
+		// Set position to cell position with gaps
+		image.position = {
+			x: col * (cellWidth + arrangeGap.value),
+			y: row * (cellHeight + arrangeGap.value)
+		}
+
+		// Set dimensions to match cell size
+		image.width = cellWidth
+		image.height = cellHeight
+	})
+}
+
+// Keep the original arrange function
 function arrangeImages() {
 	if (images.value.length === 0) return
 
@@ -685,8 +811,33 @@ function arrangeImages() {
 	}
 }
 
+// Update centerSurface function
+function centerSurface() {
+	const container = viewerRef.value
+	if (!container) return
+
+	const rect = container.getBoundingClientRect()
+	position.value = {
+		x: (rect.width - cmToPixels(surfaceWidth.value) * zoom.value) / 2,
+		y: 20 // Fixed top padding
+	}
+}
+
+function constrainPosition(index: number) {
+	const image = images.value[index]
+	if (!image) return
+
+	// Constrain X position
+	image.position.x = Math.max(0, Math.min(surfaceWidth.value - image.width, image.position.x))
+	
+	// Constrain Y position
+	image.position.y = Math.max(0, Math.min(surfaceHeight.value - image.height, image.position.y))
+}
+
 onMounted(() => {
 	window.addEventListener('click', handleClickOutside)
+	// Center the surface initially
+	centerSurface()
 })
 
 onUnmounted(() => {
@@ -857,6 +1008,14 @@ onUnmounted(() => {
 					>
 						Arrange
 					</button>
+					<button
+						v-if="images.length > 0"
+						class="px-3 py-1 hover:bg-[#3a3a3a] rounded text-sm"
+						title="Table View (T)"
+						@click="arrangeAsTable"
+					>
+						Table
+					</button>
 					<div class="flex items-center gap-2 ml-2">
 						<span class="text-sm">Gap:</span>
 						<input
@@ -875,82 +1034,160 @@ onUnmounted(() => {
 
 		<div class="flex gap-4 flex-1">
 			<div class="flex-1 overflow-hidden bg-gray-900 rounded-lg">
-				<div
-					ref="viewerRef"
-					class="viewer-container relative w-full h-full flex justify-center"
-					@wheel="handleWheel"
-					@mousedown="handleViewerMouseDown"
-					@mousemove.stop="handleViewerMouseMove"
-					@mouseup.stop="handleViewerMouseUp"
-					:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
-				>
-					<div
-						class="viewer absolute"
+				<!-- Horizontal Ruler -->
+				<div class="h-8 ml-8 relative bg-[#2b2b2b] border-b border-[#3a3a3a] overflow-hidden">
+					<div 
+						class="absolute h-full"
 						:style="{
-							width: cmToPixels(surfaceWidth) + 'px',
-							height: cmToPixels(surfaceHeight) + 'px',
-							transform: `translateX(-50%) scale(${zoom})`,
-							left: '50%',
-							top: 0,
-							transformOrigin: 'top center',
+							transform: `translate(${position.x}px, 0) scale(${zoom})`,
+							transformOrigin: 'left',
+							width: cmToPixels(surfaceWidth) + 'px'
 						}"
-						@mousemove="handleMouseMove"
-						@mouseup="handleMouseUp"
-						@mouseleave="handleMouseUp"
 					>
-						<template v-if="images.length > 0">
-							<div
-								v-for="(image, index) in images"
-								:key="index"
-								class="absolute"
-								:style="{
-									transform: `translate(${cmToPixels(image.position.x)}px, ${cmToPixels(image.position.y)}px) rotate(${image.rotation}deg)`,
-									width: `${cmToPixels(image.width)}px`,
-									height: `${cmToPixels(image.height)}px`,
-									cursor: isDragging && draggedImageIndex === index ? 'grabbing' : 'grab',
-									scale: zoom,
-									transformOrigin: '0 0',
-								}"
-								@mousedown="(e) => handleMouseDown(e, index)"
+						<div 
+							v-for="i in Math.ceil(surfaceWidth)"
+							:key="i"
+							class="absolute top-0 h-full flex items-end"
+							:style="{ left: `${cmToPixels(i - 1)}px` }"
+						>
+							<div class="h-2 border-l border-[#8b8b8b]"></div>
+							<div 
+								v-if="(i - 1) % 5 === 0" 
+								class="absolute bottom-0 left-0 text-[10px] text-[#8b8b8b] transform -translate-x-1/2"
 							>
-								<div class="relative group h-full w-full">
-									<div
-										class="w-full h-full"
-										:style="{
-											backgroundImage: `url(${image.url})`,
-											backgroundSize: `${cmToPixels(5)}px ${cmToPixels(5)}px`, // 5cm × 5cm tiles
-											backgroundRepeat: 'repeat',
-										}"
-									></div>
-									<div
-										class="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 rounded p-1 flex gap-1"
-									>
-										<button
-											class="p-1 text-white hover:bg-gray-700 rounded"
-											title="Rotate Left"
-											@click.stop="rotateLeft(index)"
-										>
-											↺
-										</button>
-										<button
-											class="p-1 text-white hover:bg-gray-700 rounded"
-											title="Rotate Right"
-											@click.stop="rotateRight(index)"
-										>
-											↻
-										</button>
-									</div>
-									<div class="absolute bottom-0 left-0 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
-										{{ Math.round(image.width * 10) / 10 }}cm × {{ Math.round(image.height * 10) / 10 }}cm
-									</div>
-									<div
-										class="absolute bottom-0 right-0 w-4 h-4 bg-white opacity-50 hover:opacity-100 cursor-se-resize"
-										@mousedown.stop="(e) => handleCornerMouseDown(e, index)"
-									></div>
+								{{ i - 1 }}
+							</div>
+						</div>
+					</div>
+				</div>
+
+				<div class="flex">
+					<!-- Vertical Ruler -->
+					<div class="w-8 relative bg-[#2b2b2b] border-r border-[#3a3a3a] overflow-hidden">
+						<div 
+							class="absolute w-full"
+							:style="{
+								transform: `translate(0, ${position.y}px) scale(${zoom})`,
+								transformOrigin: 'top',
+								height: cmToPixels(surfaceHeight) + 'px'
+							}"
+						>
+							<div 
+								v-for="i in Math.ceil(surfaceHeight)"
+								:key="i"
+								class="absolute left-0 w-full flex items-center"
+								:style="{ top: `${cmToPixels(i - 1)}px` }"
+							>
+								<div class="w-2 border-t border-[#8b8b8b]"></div>
+								<div 
+									v-if="(i - 1) % 5 === 0" 
+									class="absolute left-3 text-[10px] text-[#8b8b8b] transform -translate-y-1/2"
+								>
+									{{ i - 1 }}
 								</div>
 							</div>
-						</template>
-						<div v-else class="h-full flex items-center justify-center text-gray-400">Add images to create a PDF</div>
+						</div>
+					</div>
+
+					<div
+						ref="viewerRef"
+						class="viewer-container flex-1 relative"
+						@wheel="handleWheel"
+						@mousedown="handleViewerMouseDown"
+						@mousemove.stop="handleViewerMouseMove"
+						@mouseup.stop="handleViewerMouseUp"
+						:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
+					>
+						<div 
+							class="viewer absolute"
+							:style="{
+								width: cmToPixels(surfaceWidth) + 'px',
+								height: cmToPixels(surfaceHeight) + 'px',
+								transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})`,
+								transformOrigin: 'center center',
+							}"
+							@mousemove="handleMouseMove"
+							@mouseup="handleMouseUp"
+							@mouseleave="handleMouseUp"
+						>
+							<template v-if="images.length > 0">
+								<!-- Add guide lines -->
+								<div v-if="isSnapping && draggedImageIndex !== -1">
+									<!-- Vertical guide -->
+									<div
+										v-if="snapGuides.vertical"
+										class="absolute border-l border-blue-500 border-dashed h-full"
+										:style="{
+											left: `${cmToPixels(snapGuides.vertical)}px`,
+											top: '0'
+										}"
+									></div>
+									<!-- Horizontal guide -->
+									<div
+										v-if="snapGuides.horizontal"
+										class="absolute border-t border-blue-500 border-dashed w-full"
+										:style="{
+											top: `${cmToPixels(snapGuides.horizontal)}px`,
+											left: '0'
+										}"
+									></div>
+								</div>
+
+								<div
+									v-for="(image, index) in images"
+									:key="index"
+									class="absolute"
+									:class="{
+										'outline outline-2 outline-blue-500': isSnapping && index === draggedImageIndex
+									}"
+									:style="{
+										transform: `translate(${cmToPixels(image.position.x)}px, ${cmToPixels(image.position.y)}px) rotate(${image.rotation}deg)`,
+										width: `${cmToPixels(image.width)}px`,
+										height: `${cmToPixels(image.height)}px`,
+										cursor: isDragging && draggedImageIndex === index ? 'grabbing' : 'grab',
+										transformOrigin: '0 0',
+									}"
+									@mousedown="(e) => handleMouseDown(e, index)"
+								>
+									<div class="relative group h-full w-full">
+										<div
+											class="w-full h-full"
+											:style="{
+												backgroundImage: `url(${image.url})`,
+												backgroundSize: `${cmToPixels(5)}px ${cmToPixels(5)}px`, // 5cm × 5cm tiles
+												backgroundRepeat: 'repeat',
+											}"
+										></div>
+										<div
+											class="absolute top-0 right-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gray-800 rounded p-1 flex gap-1"
+										>
+											<button
+												class="p-1 text-white hover:bg-gray-700 rounded"
+												title="Rotate Left"
+												@click.stop="rotateLeft(index)"
+											>
+												↺
+											</button>
+											<button
+												class="p-1 text-white hover:bg-gray-700 rounded"
+												title="Rotate Right"
+												@click.stop="rotateRight(index)"
+											>
+												↻
+											</button>
+										</div>
+										<div class="absolute bottom-0 left-0 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
+											{{ Math.round(image.width * 10) / 10 }}cm × {{ Math.round(image.height * 10) / 10 }}cm
+										</div>
+										<div
+											class="absolute bottom-0 right-0 w-4 h-4 bg-white opacity-50 hover:opacity-100 cursor-se-resize"
+											@mousedown.stop="(e) => handleCornerMouseDown(e, index)"
+										></div>
+									</div>
+								</div>
+							</template>
+							<div v-else class="h-full flex items-center justify-center text-gray-400">Add images to create a PDF</div>
+						</div>
 					</div>
 				</div>
 			</div>
@@ -964,9 +1201,28 @@ onUnmounted(() => {
 					</div>
 					<div>
 						<label class="block text-sm text-gray-400">Position</label>
-						<div>
-							X: {{ Math.round(images[selectedImageIndex].position.x * 10) / 10 }}cm
-							Y: {{ Math.round(images[selectedImageIndex].position.y * 10) / 10 }}cm
+						<div class="flex gap-2 items-center">
+							<div class="flex items-center gap-1">
+								<span class="text-sm">X:</span>
+								<input
+									v-model.number="images[selectedImageIndex].position.x"
+									type="number"
+									class="w-20 px-2 py-1 bg-[#3a3a3a] rounded border border-[#2b2b2b] focus:border-[#0a84ff] text-sm"
+									step="0.1"
+									@input="constrainPosition(selectedImageIndex)"
+								/>
+							</div>
+							<div class="flex items-center gap-1">
+								<span class="text-sm">Y:</span>
+								<input
+									v-model.number="images[selectedImageIndex].position.y"
+									type="number"
+									class="w-20 px-2 py-1 bg-[#3a3a3a] rounded border border-[#2b2b2b] focus:border-[#0a84ff] text-sm"
+									step="0.1"
+									@input="constrainPosition(selectedImageIndex)"
+								/>
+							</div>
+							<span class="text-sm text-gray-400">cm</span>
 						</div>
 					</div>
 					<div>
@@ -992,15 +1248,12 @@ onUnmounted(() => {
 
 <style scoped>
 .viewer-container {
-	overflow: auto;
-	position: relative;
-	height: calc(100vh - 120px);
-	scrollbar-width: none;
-	-ms-overflow-style: none;
-	padding: 0 20vw;  /* Only add horizontal padding */
+	height: calc(100vh - 152px); /* Account for ruler height */
+	overflow: hidden;
 }
 
 .viewer {
+	position: absolute;
 	background-image: linear-gradient(45deg, #2c2c2c 25%, transparent 25%),
 		linear-gradient(-45deg, #2c2c2c 25%, transparent 25%), 
 		linear-gradient(45deg, transparent 75%, #2c2c2c 75%),
@@ -1014,10 +1267,11 @@ onUnmounted(() => {
 	cursor: default;
 	user-select: none;
 	will-change: transform;
-	transform-origin: center center;
 }
 
-.viewer-container::-webkit-scrollbar {
-	display: none;
+/* Add ruler styles */
+.ruler-mark {
+	position: absolute;
+	background: #8b8b8b;
 }
 </style>

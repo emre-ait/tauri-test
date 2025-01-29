@@ -7,10 +7,9 @@
     "dialog": null
   },
   "build": {
-    "beforeDevCommand": "npm dev",
+    "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm build",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
     "windows": [
@@ -19,7 +18,7 @@
         "width": 800,
         "height": 600,
         "decorations": false
-      }
+		}
     ],
     "security": {
       "csp": null
