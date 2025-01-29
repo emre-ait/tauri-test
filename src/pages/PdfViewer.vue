@@ -47,9 +47,15 @@ const arrangeGap = ref(1) // Default 1cm gap
 const position = ref({ x: 0, y: 0 })
 
 // Add these refs
-const snapThreshold = ref(0.5) // 0.5cm snap threshold
+const snapThreshold = ref(0.2) // 0.2cm snap threshold
 const isSnapping = ref(false)
 const snapGuides = ref({ vertical: null as number | null, horizontal: null as number | null })
+
+// Add these refs
+const selectionBox = ref({ x: 0, y: 0, width: 0, height: 0 })
+const isSelecting = ref(false)
+const selectionStart = ref({ x: 0, y: 0 })
+const selectedImageIndices = ref<number[]>([])
 
 function updateSurfaceDimensions(width: number, height: number) {
 	surfaceWidth.value = Math.max(10, Math.min(1000, width))
@@ -115,91 +121,133 @@ function handleMouseMove(e: MouseEvent) {
 		image.width = Math.max(1, newWidth)
 		image.height = Math.max(1, newHeight)
 	} else if (isDragging.value) {
-		const newX = pixelsToCm(e.clientX - startPos.value.x) / zoom.value
-		const newY = pixelsToCm(e.clientY - startPos.value.y) / zoom.value
+		const newX = pixelsToCm((e.clientX - startPos.value.x) / zoom.value)
+		const newY = pixelsToCm((e.clientY - startPos.value.y) / zoom.value)
 
 		// Reset snap guides
 		snapGuides.value = { vertical: null, horizontal: null }
+		isSnapping.value = false
+
 		let hasSnapped = false
-		let snappedX = newX
-		let snappedY = newY
 
-		images.value.forEach((otherImage, index) => {
-			if (index === draggedImageIndex.value) return
+		// Calculate the offset from the original position
+		const offsetX = newX - image.position.x
+		const offsetY = newY - image.position.y
+		let finalOffsetX = offsetX
+		let finalOffsetY = offsetY
 
-			// Vertical alignments (X-axis)
-			const currentLeft = newX
-			const currentRight = newX + image.width
-			const currentCenterX = newX + image.width/2
-			
-			const otherLeft = otherImage.position.x
-			const otherRight = otherImage.position.x + otherImage.width
-			const otherCenterX = otherImage.position.x + otherImage.width/2
+		// Check snapping for the dragged image
+		const moveSpeed = Math.sqrt(offsetX * offsetX + offsetY * offsetY)
+		if (moveSpeed < 0.5) { // Only snap when moving very slowly
+			images.value.forEach((otherImage, index) => {
+				if (!selectedImageIndices.value.includes(index)) {
+					// Vertical alignments (X-axis)
+					const currentLeft = newX
+					const currentRight = newX + image.width
+					const currentCenterX = newX + image.width/2
+					
+					const otherLeft = otherImage.position.x
+					const otherRight = otherImage.position.x + otherImage.width
+					const otherCenterX = otherImage.position.x + otherImage.width/2
 
-			// Check all possible vertical alignments
-			const verticalAlignments = [
-				{ pos: currentLeft, target: otherLeft }, // Left to Left
-				{ pos: currentLeft, target: otherRight }, // Left to Right
-				{ pos: currentLeft, target: otherCenterX }, // Left to Center
-				{ pos: currentRight, target: otherLeft }, // Right to Left
-				{ pos: currentRight, target: otherRight }, // Right to Right
-				{ pos: currentRight, target: otherCenterX }, // Right to Center
-				{ pos: currentCenterX, target: otherLeft }, // Center to Left
-				{ pos: currentCenterX, target: otherRight }, // Center to Right
-				{ pos: currentCenterX, target: otherCenterX }, // Center to Center
-			]
+					const verticalAlignments = [
+						{ pos: currentLeft, target: otherLeft }, // Left to Left
+						{ pos: currentLeft, target: otherRight }, // Left to Right
+						{ pos: currentLeft, target: otherCenterX }, // Left to Center
+						{ pos: currentRight, target: otherLeft }, // Right to Left
+						{ pos: currentRight, target: otherRight }, // Right to Right
+						{ pos: currentRight, target: otherCenterX }, // Right to Center
+						{ pos: currentCenterX, target: otherLeft }, // Center to Left
+						{ pos: currentCenterX, target: otherRight }, // Center to Right
+						{ pos: currentCenterX, target: otherCenterX } // Center to Center
+					]
 
-			for (const align of verticalAlignments) {
-				if (Math.abs(align.pos - align.target) < snapThreshold.value) {
-					hasSnapped = true
-					snapGuides.value.vertical = align.target
-					// Calculate the offset to align the edges
-					const offset = align.pos - currentLeft
-					snappedX = align.target - offset
-					break
+					for (const align of verticalAlignments) {
+						const distance = Math.abs(align.pos - align.target)
+						if (distance < snapThreshold.value) {
+							hasSnapped = true
+							snapGuides.value.vertical = align.target
+							const offset = align.pos - currentLeft
+							const snapStrength = 1 - (distance / snapThreshold.value)
+							const targetOffset = (align.target - offset) - image.position.x
+							finalOffsetX = offsetX + (targetOffset - offsetX) * snapStrength
+							break
+						}
+					}
+
+					// Horizontal alignments (Y-axis)
+					const currentTop = newY
+					const currentBottom = newY + image.height
+					const currentCenterY = newY + image.height/2
+					
+					const otherTop = otherImage.position.y
+					const otherBottom = otherImage.position.y + otherImage.height
+					const otherCenterY = otherImage.position.y + otherImage.height/2
+
+					const horizontalAlignments = [
+						{ pos: currentTop, target: otherTop }, // Top to Top
+						{ pos: currentTop, target: otherBottom }, // Top to Bottom
+						{ pos: currentTop, target: otherCenterY }, // Top to Center
+						{ pos: currentBottom, target: otherTop }, // Bottom to Top
+						{ pos: currentBottom, target: otherBottom }, // Bottom to Bottom
+						{ pos: currentBottom, target: otherCenterY }, // Bottom to Center
+						{ pos: currentCenterY, target: otherTop }, // Center to Top
+						{ pos: currentCenterY, target: otherBottom }, // Center to Bottom
+						{ pos: currentCenterY, target: otherCenterY } // Center to Center
+					]
+
+					for (const align of horizontalAlignments) {
+						const distance = Math.abs(align.pos - align.target)
+						if (distance < snapThreshold.value) {
+							hasSnapped = true
+							snapGuides.value.horizontal = align.target
+							const offset = align.pos - currentTop
+							const snapStrength = 1 - (distance / snapThreshold.value)
+							const targetOffset = (align.target - offset) - image.position.y
+							finalOffsetY = offsetY + (targetOffset - offsetY) * snapStrength
+							break
+						}
+					}
 				}
-			}
-
-			// Horizontal alignments (Y-axis)
-			const currentTop = newY
-			const currentBottom = newY + image.height
-			const currentCenterY = newY + image.height/2
-			
-			const otherTop = otherImage.position.y
-			const otherBottom = otherImage.position.y + otherImage.height
-			const otherCenterY = otherImage.position.y + otherImage.height/2
-
-			// Check all possible horizontal alignments
-			const horizontalAlignments = [
-				{ pos: currentTop, target: otherTop }, // Top to Top
-				{ pos: currentTop, target: otherBottom }, // Top to Bottom
-				{ pos: currentTop, target: otherCenterY }, // Top to Center
-				{ pos: currentBottom, target: otherTop }, // Bottom to Top
-				{ pos: currentBottom, target: otherBottom }, // Bottom to Bottom
-				{ pos: currentBottom, target: otherCenterY }, // Bottom to Center
-				{ pos: currentCenterY, target: otherTop }, // Center to Top
-				{ pos: currentCenterY, target: otherBottom }, // Center to Bottom
-				{ pos: currentCenterY, target: otherCenterY }, // Center to Center
-			]
-
-			for (const align of horizontalAlignments) {
-				if (Math.abs(align.pos - align.target) < snapThreshold.value) {
-					hasSnapped = true
-					snapGuides.value.horizontal = align.target
-					// Calculate the offset to align the edges
-					const offset = align.pos - currentTop
-					snappedY = align.target - offset
-					break
-				}
-			}
-		})
+			})
+		}
 
 		isSnapping.value = hasSnapped
 
-		// Apply constrained position
-		image.position = {
-			x: Math.max(0, Math.min(surfaceWidth.value - image.width, hasSnapped ? snappedX : newX)),
-			y: Math.max(0, Math.min(surfaceHeight.value - image.height, hasSnapped ? snappedY : newY))
+		// Check if any selected image would go out of bounds
+		let canMoveX = true
+		let canMoveY = true
+		
+		selectedImageIndices.value.forEach(idx => {
+			const selectedImage = images.value[idx]
+			const newPosX = selectedImage.position.x + finalOffsetX
+			const newPosY = selectedImage.position.y + finalOffsetY
+			
+			if (newPosX < 0 || newPosX + selectedImage.width > surfaceWidth.value) {
+				canMoveX = false
+			}
+			
+			if (newPosY < 0 || newPosY + selectedImage.height > surfaceHeight.value) {
+				canMoveY = false
+			}
+		})
+		
+		// Move all selected images
+		selectedImageIndices.value.forEach(idx => {
+			const selectedImage = images.value[idx]
+			const newPosX = canMoveX ? selectedImage.position.x + finalOffsetX : selectedImage.position.x
+			const newPosY = canMoveY ? selectedImage.position.y + finalOffsetY : selectedImage.position.y
+			
+			selectedImage.position = {
+				x: newPosX,
+				y: newPosY
+			}
+		})
+		
+		// Store the new position for the dragged image for next offset calculation
+		startPos.value = {
+			x: e.clientX - cmToPixels(image.position.x) * zoom.value,
+			y: e.clientY - cmToPixels(image.position.y) * zoom.value
 		}
 	}
 }
@@ -215,7 +263,13 @@ function handleMouseUp() {
 }
 
 function rotateLeft(index: number) {
-	images.value[index].rotation = (images.value[index].rotation - 90) % 360
+	if (selectedImageIndices.value.includes(index)) {
+		selectedImageIndices.value.forEach(idx => {
+			images.value[idx].rotation = (images.value[idx].rotation - 90) % 360
+		})
+	} else {
+		images.value[index].rotation = (images.value[index].rotation - 90) % 360
+	}
 }
 
 function rotateRight(index: number) {
@@ -226,9 +280,31 @@ function handleMouseDown(e: MouseEvent, index: number) {
 	// Only allow left click for image dragging
 	if (e.button !== 0 || isSpacePressed.value) return
 	
+	e.stopPropagation() // Stop event from bubbling to viewer
+	
 	isDragging.value = true
 	draggedImageIndex.value = index
-	selectedImageIndex.value = index
+
+	if (e.shiftKey) {
+		// Shift+click - toggle this image in selection
+		const selectionIndex = selectedImageIndices.value.indexOf(index)
+		if (selectionIndex === -1) {
+			selectedImageIndices.value.push(index)
+			selectedImageIndex.value = index
+		} else {
+			selectedImageIndices.value.splice(selectionIndex, 1)
+			selectedImageIndex.value = selectedImageIndices.value.length > 0 ? 
+				selectedImageIndices.value[selectedImageIndices.value.length - 1] : -1
+		}
+	} else if (selectedImageIndices.value.includes(index)) {
+		// Clicking an already selected image - keep the selection
+		selectedImageIndex.value = index
+	} else {
+		// Clicking a new image - select only this one
+		selectedImageIndices.value = [index]
+		selectedImageIndex.value = index
+	}
+	
 	const image = images.value[index]
 	startPos.value = {
 		x: e.clientX - cmToPixels(image.position.x) * zoom.value,
@@ -526,6 +602,33 @@ function handleViewerMouseDown(e: MouseEvent) {
 			x: e.clientX - position.value.x,
 			y: e.clientY - position.value.y
 		}
+	} else if (e.button === 0) {
+		const target = e.target as HTMLElement
+		
+		if (target.closest('.viewer') && !target.closest('.image-container')) {
+			isSelecting.value = true
+			const rect = viewerRef.value?.getBoundingClientRect()
+			if (!rect) return
+			
+			const surfaceX = e.clientX - rect.left - position.value.x - 32
+			const surfaceY = e.clientY - rect.top - position.value.y - 32
+			
+			selectionStart.value = {
+				x: surfaceX,
+				y: surfaceY
+			}
+			selectionBox.value = {
+				x: surfaceX,
+				y: surfaceY,
+				width: 0,
+				height: 0
+			}
+			
+			if (!e.shiftKey) {
+				selectedImageIndices.value = []
+				selectedImageIndex.value = -1
+			}
+		}
 	}
 }
 
@@ -535,18 +638,58 @@ function handleViewerMouseMove(e: MouseEvent) {
 			x: e.clientX - panStart.value.x,
 			y: e.clientY - panStart.value.y
 		}
+	} else if (isSelecting.value) {
+		const rect = viewerRef.value?.getBoundingClientRect()
+		if (!rect) return
+		
+		const surfaceX = e.clientX - rect.left - position.value.x - 32
+		const surfaceY = e.clientY - rect.top - position.value.y - 32
+		
+		selectionBox.value = {
+			x: Math.min(selectionStart.value.x, surfaceX),
+			y: Math.min(selectionStart.value.y, surfaceY),
+			width: Math.abs(surfaceX - selectionStart.value.x),
+			height: Math.abs(surfaceY - selectionStart.value.y)
+		}
+		
+		// Check which images are in the selection box
+		images.value.forEach((image, index) => {
+			const imageRect = {
+				x: cmToPixels(image.position.x),
+				y: cmToPixels(image.position.y),
+				width: cmToPixels(image.width),
+				height: cmToPixels(image.height)
+			}
+			
+			if (isRectIntersecting(selectionBox.value, imageRect)) {
+				if (!selectedImageIndices.value.includes(index)) {
+					selectedImageIndices.value.push(index)
+					selectedImageIndex.value = index
+				}
+			}
+		})
 	}
 }
 
 function handleViewerMouseUp() {
 	isPanning.value = false
+	isSelecting.value = false
 }
 
 function removeImage(index: number) {
-	// Revoke URL before removing
-	URL.revokeObjectURL(images.value[index].url)
-	images.value.splice(index, 1)
-	selectedImageIndex.value = -1
+	// Remove all selected images if the clicked image is selected
+	if (selectedImageIndices.value.includes(index)) {
+		selectedImageIndices.value.forEach(idx => {
+			URL.revokeObjectURL(images.value[idx].url)
+		})
+		images.value = images.value.filter((_, idx) => !selectedImageIndices.value.includes(idx))
+		selectedImageIndices.value = []
+		selectedImageIndex.value = -1
+	} else {
+		URL.revokeObjectURL(images.value[index].url)
+		images.value.splice(index, 1)
+		selectedImageIndex.value = -1
+	}
 }
 
 function duplicateImage(index: number) {
@@ -832,6 +975,20 @@ function constrainPosition(index: number) {
 	
 	// Constrain Y position
 	image.position.y = Math.max(0, Math.min(surfaceHeight.value - image.height, image.position.y))
+}
+
+// Update isRectIntersecting to be more precise
+function isRectIntersecting(r1: { x: number, y: number, width: number, height: number }, 
+						  r2: { x: number, y: number, width: number, height: number }) {
+	const r1Right = r1.x + r1.width
+	const r1Bottom = r1.y + r1.height
+	const r2Right = r2.x + r2.width
+	const r2Bottom = r2.y + r2.height
+	
+	return !(r2.x > r1Right ||
+			r2Right < r1.x ||
+			r2.y > r1Bottom ||
+			r2Bottom < r1.y)
 }
 
 onMounted(() => {
@@ -1133,23 +1290,29 @@ onUnmounted(() => {
 									></div>
 								</div>
 
+								<!-- Images -->
 								<div
 									v-for="(image, index) in images"
 									:key="index"
-									class="absolute"
+									class="absolute image-container"
 									:class="{
-										'outline outline-2 outline-blue-500': isSnapping && index === draggedImageIndex
+										'outline outline-2 outline-blue-500': selectedImageIndices.includes(index),
+										'outline outline-2 outline-blue-700': isSnapping && index === draggedImageIndex
 									}"
 									:style="{
 										transform: `translate(${cmToPixels(image.position.x)}px, ${cmToPixels(image.position.y)}px) rotate(${image.rotation}deg)`,
 										width: `${cmToPixels(image.width)}px`,
 										height: `${cmToPixels(image.height)}px`,
-										cursor: isDragging && draggedImageIndex === index ? 'grabbing' : 'grab',
+										cursor: 'pointer',
 										transformOrigin: '0 0',
+										zIndex: '1'
 									}"
-									@mousedown="(e) => handleMouseDown(e, index)"
+									@mousedown.stop="(e) => handleMouseDown(e, index)"
 								>
-									<div class="relative group h-full w-full">
+									<div 
+										class="relative group h-full w-full"
+										:class="{ 'cursor-grabbing': isDragging && draggedImageIndex === index, 'cursor-grab': !isDragging }"
+									>
 										<div
 											class="w-full h-full"
 											:style="{
@@ -1185,6 +1348,19 @@ onUnmounted(() => {
 										></div>
 									</div>
 								</div>
+
+								<!-- Selection box (moved to top) -->
+								<div
+									v-if="isSelecting"
+									class="absolute border-2 border-blue-500 bg-transparent pointer-events-none"
+									:style="{
+										left: `${selectionBox.x}px`,
+										top: `${selectionBox.y}px`,
+										width: `${selectionBox.width}px`,
+										height: `${selectionBox.height}px`,
+										zIndex: '2'
+									}"
+								></div>
 							</template>
 							<div v-else class="h-full flex items-center justify-center text-gray-400">Add images to create a PDF</div>
 						</div>
