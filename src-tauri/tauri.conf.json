@@ -4,7 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.ait.test",
   "plugins": {
-    "dialog": null
+    "dialog": null,
+    "os": {
+      "all": true
+    }
   },
   "build": {
     "beforeDevCommand": "npm run dev",

@@ -4,6 +4,7 @@ import { PDFDocument } from 'pdf-lib'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import ExifReader from 'exif-reader'
+import { platform } from '@tauri-apps/plugin-os'
 
 interface ImageData {
 	data: Uint8Array
@@ -16,6 +17,16 @@ interface ImageData {
 	height: number // in cm
 	isResizing: boolean
 	filename: string
+}
+
+interface ProjectData {
+	id: string
+	name: string
+	surfaceWidth: number
+	surfaceHeight: number
+	images: ImageData[]
+	position: { x: number; y: number }
+	zoom: number
 }
 
 const pdfDoc = ref<PDFDocument | null>(null)
@@ -56,6 +67,24 @@ const selectionBox = ref({ x: 0, y: 0, width: 0, height: 0 })
 const isSelecting = ref(false)
 const selectionStart = ref({ x: 0, y: 0 })
 const selectedImageIndices = ref<number[]>([])
+
+// Add these refs
+const totalMemory = ref(0)
+const usedMemory = ref(0)
+const systemPlatform = ref('')
+
+// Add these refs for project management
+const projects = ref<ProjectData[]>([])
+const activeProjectId = ref<string>('')
+
+// Add these refs
+const editingProjectId = ref<string>('')
+const editingProjectName = ref('')
+
+// Add custom directive for auto-focus
+const vFocus = {
+	mounted: (el: HTMLElement) => el.focus()
+}
 
 function updateSurfaceDimensions(width: number, height: number) {
 	surfaceWidth.value = Math.max(10, Math.min(1000, width))
@@ -804,6 +833,9 @@ function newSurface() {
 
 async function saveProject() {
 	try {
+		const currentProject = projects.value.find(p => p.id === activeProjectId.value)
+		if (!currentProject) return
+		
 		const projectData = {
 			surfaceWidth: surfaceWidth.value,
 			surfaceHeight: surfaceHeight.value,
@@ -818,7 +850,7 @@ async function saveProject() {
 
 		const link = document.createElement('a')
 		link.href = url
-		link.download = 'surface_project.json'
+		link.download = `${currentProject.name}.json`
 		document.body.appendChild(link)
 		link.click()
 		document.body.removeChild(link)
@@ -832,37 +864,31 @@ async function loadProject() {
 	try {
 		const selected = await open({
 			multiple: false,
-			filters: [
-				{
-					name: 'Surface Project',
-					extensions: ['json'],
-				},
-			],
+			filters: [{ name: 'JSON', extensions: ['json'] }],
 		})
 
 		if (selected) {
 			const fileContent = await readFile(selected as string)
 			const projectData = JSON.parse(new TextDecoder().decode(fileContent))
-
-			// Clean up existing images
-			clearAllImages()
-
-			// Restore surface dimensions
-			surfaceWidth.value = projectData.surfaceWidth
-			surfaceHeight.value = projectData.surfaceHeight
-
-			// Restore images
-			for (const imgData of projectData.images) {
-				const data = new Uint8Array(imgData.data)
-				const blob = new Blob([data], { type: `image/${imgData.type}` })
-				const url = URL.createObjectURL(blob)
-
-				images.value.push({
-					...imgData,
-					data,
-					url,
-				})
+			
+			// Convert array data back to Uint8Array for images
+			const processedImages = projectData.images.map((img: any) => ({
+				...img,
+				data: new Uint8Array(img.data)
+			}))
+			
+			// Create new project from loaded data
+			const newProject: ProjectData = {
+				id: crypto.randomUUID(),
+				name: (selected as string).split(/[/\\]/).pop()?.replace('.json', '') || 'Untitled',
+				surfaceWidth: projectData.surfaceWidth,
+				surfaceHeight: projectData.surfaceHeight,
+				images: processedImages,
+				position: projectData.position || { x: 0, y: 0 },
+				zoom: projectData.zoom || 1
 			}
+			projects.value.push(newProject)
+			switchProject(newProject.id)
 		}
 	} catch (error) {
 		console.error('Error loading project:', error)
@@ -991,10 +1017,142 @@ function isRectIntersecting(r1: { x: number, y: number, width: number, height: n
 			r2Bottom < r1.y)
 }
 
+// Function to update memory info
+async function updateMemoryInfo() {
+	try {
+		// For now, let's use navigator.deviceMemory as a fallback
+		if (navigator.deviceMemory) {
+			totalMemory.value = navigator.deviceMemory
+			usedMemory.value = Math.round(navigator.deviceMemory * 0.7) // Rough estimate
+		}
+		systemPlatform.value = await platform()
+	} catch (error) {
+		console.error('Error getting system info:', error)
+	}
+}
+
+// Function to create a new project
+function createNewProject(name: string = 'Untitled') {
+	// Save current project if exists
+	if (activeProjectId.value) {
+		const currentProject = projects.value.find(p => p.id === activeProjectId.value)
+		if (currentProject) {
+			currentProject.surfaceWidth = surfaceWidth.value
+			currentProject.surfaceHeight = surfaceHeight.value
+			currentProject.images = images.value.map(img => ({
+				...img,
+				data: img.data,
+				url: ''
+			}))
+			currentProject.position = { ...position.value }
+			currentProject.zoom = zoom.value
+		}
+	}
+
+	const newProject: ProjectData = {
+		id: crypto.randomUUID(),
+		name,
+		surfaceWidth: 100,
+		surfaceHeight: 100,
+		images: [],
+		position: { x: 0, y: 0 },
+		zoom: 1
+	}
+	projects.value.push(newProject)
+	activeProjectId.value = newProject.id
+	
+	// Clear current state
+	images.value = []
+	surfaceWidth.value = 100
+	surfaceHeight.value = 100
+	position.value = { x: 0, y: 0 }
+	zoom.value = 1
+	centerSurface()
+}
+
+// Function to switch between projects
+function switchProject(projectId: string) {
+	// Save current project state
+	if (activeProjectId.value) {
+		const currentProject = projects.value.find(p => p.id === activeProjectId.value)
+		if (currentProject) {
+			currentProject.surfaceWidth = surfaceWidth.value
+			currentProject.surfaceHeight = surfaceHeight.value
+			currentProject.images = images.value.map(img => ({
+				...img,
+				data: img.data,
+				url: '' // Don't store URLs as they need to be recreated
+			}))
+			currentProject.position = { ...position.value }
+			currentProject.zoom = zoom.value
+		}
+	}
+	
+	// Load new project state
+	const project = projects.value.find(p => p.id === projectId)
+	if (project) {
+		activeProjectId.value = projectId
+		surfaceWidth.value = project.surfaceWidth
+		surfaceHeight.value = project.surfaceHeight
+		images.value = project.images.map(img => {
+			const blob = new Blob([img.data], { type: `image/${img.type}` })
+			const url = URL.createObjectURL(blob)
+			return {
+				...img,
+				url
+			}
+		})
+		position.value = { ...project.position }
+		zoom.value = project.zoom
+		centerSurface()
+	}
+}
+
+// Function to close project
+function closeProject(projectId: string) {
+	const index = projects.value.findIndex(p => p.id === projectId)
+	if (index !== -1) {
+		projects.value.splice(index, 1)
+		if (projectId === activeProjectId.value) {
+			activeProjectId.value = projects.value[Math.max(0, index - 1)]?.id || ''
+			if (activeProjectId.value) {
+				switchProject(activeProjectId.value)
+			}
+		}
+	}
+}
+
+// Add function to handle tab rename
+function startRenameProject(project: ProjectData, event: MouseEvent) {
+	event.stopPropagation()
+	editingProjectId.value = project.id
+	editingProjectName.value = project.name
+}
+
+function finishRenameProject() {
+	if (editingProjectId.value) {
+		const project = projects.value.find(p => p.id === editingProjectId.value)
+		if (project && editingProjectName.value.trim()) {
+			project.name = editingProjectName.value.trim()
+		}
+		editingProjectId.value = ''
+		editingProjectName.value = ''
+	}
+}
+
 onMounted(() => {
 	window.addEventListener('click', handleClickOutside)
-	// Center the surface initially
+	// Create initial project if none exists
+	if (projects.value.length === 0) {
+		createNewProject()
+	}
 	centerSurface()
+	updateMemoryInfo()
+	const memoryInterval = setInterval(updateMemoryInfo, 2000)
+	
+	onUnmounted(() => {
+		clearInterval(memoryInterval)
+	})
 })
 
 onUnmounted(() => {
@@ -1066,35 +1224,48 @@ onUnmounted(() => {
 				</div>
 			</div>
 
-			<!-- Options bar -->
-			<div class="flex items-center justify-between px-4 py-2 bg-[#2b2b2b] text-[#8b8b8b]">
-				<div class="flex items-center gap-4">
-					<div class="flex items-center gap-2">
-						<span>Surface:</span>
+			<!-- Project tabs -->
+			<div class="flex items-center gap-1 px-2 py-1 bg-[#1e1e1e] border-t border-[#3a3a3a] overflow-x-auto">
+				<div
+					v-for="project in projects"
+					:key="project.id"
+					class="flex items-center gap-2 px-3 py-1 rounded-t cursor-pointer text-sm"
+					:class="[
+						project.id === activeProjectId 
+							? 'bg-[#2b2b2b] text-white' 
+							: 'bg-[#252525] text-[#8b8b8b] hover:bg-[#2b2b2b]'
+					]"
+					@click="switchProject(project.id)"
+					@dblclick="startRenameProject(project, $event)"
+				>
+					<div class="min-w-[60px]">
 						<input
-							v-model.number="surfaceWidth"
-							type="number"
-							class="w-16 px-2 py-1 bg-[#3a3a3a] rounded border border-[#2b2b2b] focus:border-[#0a84ff]"
-							min="10"
-							max="1000"
-							@input="updateSurfaceDimensions(surfaceWidth, surfaceHeight)"
+							v-if="editingProjectId === project.id"
+							v-model="editingProjectName"
+							class="w-full px-1 py-0.5 bg-[#1e1e1e] text-white rounded border border-[#0a84ff] focus:outline-none"
+							@keyup.enter="finishRenameProject"
+							@blur="finishRenameProject"
+							@click.stop
+							ref="editInput"
+							v-focus
 						/>
-						<span>×</span>
-						<input
-							v-model.number="surfaceHeight"
-							type="number"
-							class="w-16 px-2 py-1 bg-[#3a3a3a] rounded border border-[#2b2b2b] focus:border-[#0a84ff]"
-							min="10"
-							max="1000"
-							@input="updateSurfaceDimensions(surfaceWidth, surfaceHeight)"
-						/>
-						<span>cm</span>
+						<span v-else>{{ project.name }}</span>
 					</div>
-					<div class="flex items-center gap-2">
-						<span>Zoom:</span>
-						<span>{{ Math.round(zoom * 100) }}%</span>
-					</div>
+					<button
+						class="opacity-50 hover:opacity-100"
+						@click.stop="closeProject(project.id)"
+					>
+						×
+					</button>
 				</div>
+				
+				<!-- New project button -->
+				<button
+					class="px-3 py-1 text-[#8b8b8b] hover:bg-[#3a3a3a] rounded text-sm"
+					@click="createNewProject()"
+				>
+					+
+				</button>
 			</div>
 
 			<!-- Tools bar -->
@@ -1419,12 +1590,48 @@ onUnmounted(() => {
 				</div>
 			</div>
 		</div>
+
+		<div class="flex items-center justify-between px-4 py-2 bg-[#2b2b2b] text-[#8b8b8b] border-t border-[#3a3a3a]">
+			<div class="flex items-center justify-between w-full">
+				<div class="flex items-center gap-4">
+					<div class="flex items-center gap-2">
+						<span>Surface:</span>
+						<input
+							v-model.number="surfaceWidth"
+							type="number"
+							class="w-16 px-2 py-1 bg-[#3a3a3a] rounded border border-[#2b2b2b] focus:border-[#0a84ff]"
+							min="10"
+							max="1000"
+							@input="updateSurfaceDimensions(surfaceWidth, surfaceHeight)"
+						/>
+						<span>×</span>
+						<input
+							v-model.number="surfaceHeight"
+							type="number"
+							class="w-16 px-2 py-1 bg-[#3a3a3a] rounded border border-[#2b2b2b] focus:border-[#0a84ff]"
+							min="10"
+							max="1000"
+							@input="updateSurfaceDimensions(surfaceWidth, surfaceHeight)"
+						/>
+						<span>cm</span>
+					</div>
+					<div class="flex items-center gap-2">
+						<span>Zoom:</span>
+						<span>{{ Math.round(zoom * 100) }}%</span>
+					</div>
+				</div>
+				<div class="flex items-center gap-2 text-sm">
+					<span class="capitalize">{{ systemPlatform }}:</span>
+					<span>{{ usedMemory }}GB / {{ totalMemory }}GB</span>
+				</div>
+			</div>
+		</div>
 	</div>
 </template>
 
 <style scoped>
 .viewer-container {
-	height: calc(100vh - 152px); /* Account for ruler height */
+	height: calc(100vh - 190px); /* Account for ruler height and bottom bar */
 	overflow: hidden;
 }
 
