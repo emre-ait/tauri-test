@@ -5,6 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import ExifReader from 'exif-reader'
 import { platform } from '@tauri-apps/plugin-os'
+import { invoke } from '@tauri-apps/api/core'
 
 interface ImageData {
 	data: Uint8Array
@@ -83,7 +84,7 @@ const editingProjectName = ref('')
 
 // Add custom directive for auto-focus
 const vFocus = {
-	mounted: (el: HTMLElement) => el.focus()
+	mounted: (el: HTMLElement) => el.focus(),
 }
 
 function updateSurfaceDimensions(width: number, height: number) {
@@ -131,7 +132,7 @@ function handleMouseMove(e: MouseEvent) {
 	if (image.isResizing) {
 		const deltaX = pixelsToCm(e.clientX - startPos.value.x) / zoom.value
 		const deltaY = pixelsToCm(e.clientY - startPos.value.y) / zoom.value
-		
+
 		// Calculate new dimensions
 		let newWidth = Math.max(1, startDimensions.value.width + deltaX)
 		let newHeight = Math.max(1, startDimensions.value.height + deltaY)
@@ -167,17 +168,18 @@ function handleMouseMove(e: MouseEvent) {
 
 		// Check snapping for the dragged image
 		const moveSpeed = Math.sqrt(offsetX * offsetX + offsetY * offsetY)
-		if (moveSpeed < 0.5) { // Only snap when moving very slowly
+		if (moveSpeed < 0.5) {
+			// Only snap when moving very slowly
 			images.value.forEach((otherImage, index) => {
 				if (!selectedImageIndices.value.includes(index)) {
 					// Vertical alignments (X-axis)
 					const currentLeft = newX
 					const currentRight = newX + image.width
-					const currentCenterX = newX + image.width/2
-					
+					const currentCenterX = newX + image.width / 2
+
 					const otherLeft = otherImage.position.x
 					const otherRight = otherImage.position.x + otherImage.width
-					const otherCenterX = otherImage.position.x + otherImage.width/2
+					const otherCenterX = otherImage.position.x + otherImage.width / 2
 
 					const verticalAlignments = [
 						{ pos: currentLeft, target: otherLeft }, // Left to Left
@@ -188,7 +190,7 @@ function handleMouseMove(e: MouseEvent) {
 						{ pos: currentRight, target: otherCenterX }, // Right to Center
 						{ pos: currentCenterX, target: otherLeft }, // Center to Left
 						{ pos: currentCenterX, target: otherRight }, // Center to Right
-						{ pos: currentCenterX, target: otherCenterX } // Center to Center
+						{ pos: currentCenterX, target: otherCenterX }, // Center to Center
 					]
 
 					for (const align of verticalAlignments) {
@@ -197,8 +199,8 @@ function handleMouseMove(e: MouseEvent) {
 							hasSnapped = true
 							snapGuides.value.vertical = align.target
 							const offset = align.pos - currentLeft
-							const snapStrength = 1 - (distance / snapThreshold.value)
-							const targetOffset = (align.target - offset) - image.position.x
+							const snapStrength = 1 - distance / snapThreshold.value
+							const targetOffset = align.target - offset - image.position.x
 							finalOffsetX = offsetX + (targetOffset - offsetX) * snapStrength
 							break
 						}
@@ -207,11 +209,11 @@ function handleMouseMove(e: MouseEvent) {
 					// Horizontal alignments (Y-axis)
 					const currentTop = newY
 					const currentBottom = newY + image.height
-					const currentCenterY = newY + image.height/2
-					
+					const currentCenterY = newY + image.height / 2
+
 					const otherTop = otherImage.position.y
 					const otherBottom = otherImage.position.y + otherImage.height
-					const otherCenterY = otherImage.position.y + otherImage.height/2
+					const otherCenterY = otherImage.position.y + otherImage.height / 2
 
 					const horizontalAlignments = [
 						{ pos: currentTop, target: otherTop }, // Top to Top
@@ -222,7 +224,7 @@ function handleMouseMove(e: MouseEvent) {
 						{ pos: currentBottom, target: otherCenterY }, // Bottom to Center
 						{ pos: currentCenterY, target: otherTop }, // Center to Top
 						{ pos: currentCenterY, target: otherBottom }, // Center to Bottom
-						{ pos: currentCenterY, target: otherCenterY } // Center to Center
+						{ pos: currentCenterY, target: otherCenterY }, // Center to Center
 					]
 
 					for (const align of horizontalAlignments) {
@@ -231,8 +233,8 @@ function handleMouseMove(e: MouseEvent) {
 							hasSnapped = true
 							snapGuides.value.horizontal = align.target
 							const offset = align.pos - currentTop
-							const snapStrength = 1 - (distance / snapThreshold.value)
-							const targetOffset = (align.target - offset) - image.position.y
+							const snapStrength = 1 - distance / snapThreshold.value
+							const targetOffset = align.target - offset - image.position.y
 							finalOffsetY = offsetY + (targetOffset - offsetY) * snapStrength
 							break
 						}
@@ -246,37 +248,37 @@ function handleMouseMove(e: MouseEvent) {
 		// Check if any selected image would go out of bounds
 		let canMoveX = true
 		let canMoveY = true
-		
-		selectedImageIndices.value.forEach(idx => {
+
+		selectedImageIndices.value.forEach((idx) => {
 			const selectedImage = images.value[idx]
 			const newPosX = selectedImage.position.x + finalOffsetX
 			const newPosY = selectedImage.position.y + finalOffsetY
-			
+
 			if (newPosX < 0 || newPosX + selectedImage.width > surfaceWidth.value) {
 				canMoveX = false
 			}
-			
+
 			if (newPosY < 0 || newPosY + selectedImage.height > surfaceHeight.value) {
 				canMoveY = false
 			}
 		})
-		
+
 		// Move all selected images
-		selectedImageIndices.value.forEach(idx => {
+		selectedImageIndices.value.forEach((idx) => {
 			const selectedImage = images.value[idx]
 			const newPosX = canMoveX ? selectedImage.position.x + finalOffsetX : selectedImage.position.x
 			const newPosY = canMoveY ? selectedImage.position.y + finalOffsetY : selectedImage.position.y
-			
+
 			selectedImage.position = {
 				x: newPosX,
-				y: newPosY
+				y: newPosY,
 			}
 		})
-		
+
 		// Store the new position for the dragged image for next offset calculation
 		startPos.value = {
 			x: e.clientX - cmToPixels(image.position.x) * zoom.value,
-			y: e.clientY - cmToPixels(image.position.y) * zoom.value
+			y: e.clientY - cmToPixels(image.position.y) * zoom.value,
 		}
 	}
 }
@@ -291,9 +293,37 @@ function handleMouseUp() {
 	snapGuides.value = { vertical: null, horizontal: null }
 }
 
+async function rotateRight(index: number) {
+	const image = images.value[index]
+	try {
+		// Send image data to Rust for rotation
+		const rotatedData = await invoke('rotate_image', {
+			imageData: {
+				data: Array.from(image.data),
+				image_type: image.type,
+				width: image.width,
+				height: image.height,
+				filename: image.filename,
+			},
+			angle: 90,
+		})
+
+		// Update image with rotated data
+		image.data = new Uint8Array(rotatedData as number[])
+		image.rotation = (image.rotation + 90) % 360
+
+		// Update image URL
+		URL.revokeObjectURL(image.url)
+		const blob = new Blob([image.data], { type: `image/${image.type}` })
+		image.url = URL.createObjectURL(blob)
+	} catch (error) {
+		console.error('Error rotating image:', error)
+	}
+}
+
 function rotateLeft(index: number) {
 	if (selectedImageIndices.value.includes(index)) {
-		selectedImageIndices.value.forEach(idx => {
+		selectedImageIndices.value.forEach((idx) => {
 			images.value[idx].rotation = (images.value[idx].rotation - 90) % 360
 		})
 	} else {
@@ -301,16 +331,12 @@ function rotateLeft(index: number) {
 	}
 }
 
-function rotateRight(index: number) {
-	images.value[index].rotation = (images.value[index].rotation + 90) % 360
-}
-
 function handleMouseDown(e: MouseEvent, index: number) {
 	// Only allow left click for image dragging
 	if (e.button !== 0 || isSpacePressed.value) return
-	
+
 	e.stopPropagation() // Stop event from bubbling to viewer
-	
+
 	isDragging.value = true
 	draggedImageIndex.value = index
 
@@ -322,8 +348,10 @@ function handleMouseDown(e: MouseEvent, index: number) {
 			selectedImageIndex.value = index
 		} else {
 			selectedImageIndices.value.splice(selectionIndex, 1)
-			selectedImageIndex.value = selectedImageIndices.value.length > 0 ? 
-				selectedImageIndices.value[selectedImageIndices.value.length - 1] : -1
+			selectedImageIndex.value =
+				selectedImageIndices.value.length > 0
+					? selectedImageIndices.value[selectedImageIndices.value.length - 1]
+					: -1
 		}
 	} else if (selectedImageIndices.value.includes(index)) {
 		// Clicking an already selected image - keep the selection
@@ -333,7 +361,7 @@ function handleMouseDown(e: MouseEvent, index: number) {
 		selectedImageIndices.value = [index]
 		selectedImageIndex.value = index
 	}
-	
+
 	const image = images.value[index]
 	startPos.value = {
 		x: e.clientX - cmToPixels(image.position.x) * zoom.value,
@@ -347,82 +375,103 @@ async function addImage() {
 			multiple: false,
 			filters: [
 				{
-					name: 'Image',
+					name: 'Supported Files',
+					extensions: ['png', 'jpg', 'jpeg', 'mif'],
+				},
+				{
+					name: 'Image Files',
 					extensions: ['png', 'jpg', 'jpeg'],
+				},
+				{
+					name: 'MIF Files',
+					extensions: ['mif'],
 				},
 			],
 		})
 
 		if (selected) {
-			const imageBytes = await readFile(selected as string)
-			const type = selected.toLowerCase().endsWith('.png') ? 'png' : 'jpg'
-			const blob = new Blob([imageBytes], { type: `image/${type}` })
-			const url = URL.createObjectURL(blob)
-			
-			const filename = (selected as string).split(/[/\\]/).pop() || ''
+			const filePath = selected as string
+			const extension = filePath.toLowerCase().split('.').pop() || ''
 
-			// Create temporary image to get dimensions
-			const img = new Image()
-			img.src = url
-			await new Promise((resolve) => {
-				img.onload = resolve
-			})
+			if (extension === 'mif') {
+				// Handle MIF file
+				try {
+					console.log('Selected MIF file:', filePath)
+					const mifData = await invoke('open_mif', {
+						request: {
+							file_path: filePath,
+						},
+					})
+					console.log('MIF file loaded, creating preview')
 
-			// Try to get resolution from EXIF data
-			let xResolution = 72 // Default resolution
-			let yResolution = 72
-			let resolutionUnit = 2 // 2 = inches, 3 = cm
+					// Create blob from the returned PNG data
+					const mifBuffer = mifData as number[]
+					const blob = new Blob([new Uint8Array(mifBuffer)], { type: 'image/png' })
+					const url = URL.createObjectURL(blob)
+					const filename = filePath.split(/[/\\]/).pop() || ''
 
-			try {
-				const exifData = ExifReader.load(imageBytes)
-				if (exifData?.exif) {
-					xResolution = exifData.exif.XResolution || xResolution
-					yResolution = exifData.exif.YResolution || yResolution
-					resolutionUnit = exifData.exif.ResolutionUnit || resolutionUnit
+					// Add as a new image
+					images.value.push({
+						data: new Uint8Array(mifBuffer),
+						type: 'png',
+						url,
+						position: { x: 0, y: 0 },
+						rotation: 0,
+						scale: 1,
+						width: 10, // Default size in cm
+						height: 10,
+						isResizing: false,
+						filename,
+					})
+
+					await updatePDF()
+				} catch (error) {
+					console.error('Error processing MIF file:', error)
 				}
-			} catch (e) {
-				console.warn('Could not read EXIF data, using default resolution')
+			} else {
+				// Handle regular image file
+				const imageBytes = await readFile(filePath)
+				const type = extension === 'png' ? 'png' : 'jpg'
+				const blob = new Blob([imageBytes], { type: `image/${type}` })
+				const url = URL.createObjectURL(blob)
+				const filename = filePath.split(/[/\\]/).pop() || ''
+
+				// Send image data to Rust for processing
+				try {
+					const processedData = await invoke('process_image', {
+						imageData: {
+							data: Array.from(imageBytes),
+							image_type: type,
+							width: 0,
+							height: 0,
+							filename,
+						},
+					})
+
+					// Use the processed data from Rust
+					const { width, height } = processedData as any
+
+					images.value.push({
+						data: imageBytes,
+						type,
+						url,
+						position: { x: 0, y: 0 },
+						rotation: 0,
+						scale: 1,
+						width,
+						height,
+						isResizing: false,
+						filename,
+					})
+
+					await updatePDF()
+				} catch (error) {
+					console.error('Error processing image in Rust:', error)
+				}
 			}
-
-			// Convert to DPI if resolution unit is cm
-			if (resolutionUnit === 3) {
-				xResolution = xResolution * 2.54
-				yResolution = yResolution * 2.54
-			}
-
-			// Convert pixel dimensions to cm
-			const widthCm = (img.width / xResolution) * 2.54
-			const heightCm = (img.height / yResolution) * 2.54
-
-			// Only scale down if larger than surface
-			let finalWidthCm = widthCm
-			let finalHeightCm = heightCm
-
-			if (widthCm > surfaceWidth.value || heightCm > surfaceHeight.value) {
-				const scaleW = surfaceWidth.value / widthCm
-				const scaleH = surfaceHeight.value / heightCm
-				const scale = Math.min(scaleW, scaleH)
-				finalWidthCm *= scale
-				finalHeightCm *= scale
-			}
-
-			images.value.push({
-				data: imageBytes,
-				type,
-				url,
-				position: { x: 0, y: 0 },
-				rotation: 0,
-				scale: 1,
-				width: finalWidthCm,
-				height: finalHeightCm,
-				isResizing: false,
-				filename,
-			})
-
-			await updatePDF()
 		}
 	} catch (error) {
-		console.error('Error processing image:', error)
+		console.error('Error processing file:', error)
 	}
 }
 
@@ -529,14 +578,14 @@ async function downloadPDF() {
 function handleWheel(e: WheelEvent) {
 	if (e.ctrlKey || e.metaKey) {
 		e.preventDefault()
-		
+
 		const rect = viewerRef.value?.getBoundingClientRect()
 		if (!rect) return
 
 		// Calculate new zoom
 		const delta = -Math.sign(e.deltaY) * 0.1
 		const newZoom = Math.max(minZoom, Math.min(maxZoom, zoom.value + delta))
-		
+
 		if (newZoom !== zoom.value) {
 			// Get the center of the container (horizontally only)
 			const containerCenterX = rect.width / 2
@@ -550,7 +599,7 @@ function handleWheel(e: WheelEvent) {
 			// Update position to keep surface centered horizontally only
 			position.value = {
 				x: containerCenterX - surfaceCenterX * newZoom,
-				y: position.value.y // Keep vertical position unchanged
+				y: position.value.y, // Keep vertical position unchanged
 			}
 		}
 	}
@@ -566,7 +615,7 @@ function handleKeyDown(e: KeyboardEvent) {
 	if (!e.ctrlKey && !e.metaKey) {
 		switch (e.code) {
 			case 'KeyA':
-				if (images.length > 0) {
+				if (images.value.length > 0) {
 					arrangeImages()
 				}
 				break
@@ -609,7 +658,7 @@ function handleKeyDown(e: KeyboardEvent) {
 				}
 				break
 			case 'KeyT':
-				if (images.length > 0) {
+				if (images.value.length > 0) {
 					arrangeAsTable()
 				}
 				break
@@ -629,30 +678,30 @@ function handleViewerMouseDown(e: MouseEvent) {
 		isPanning.value = true
 		panStart.value = {
 			x: e.clientX - position.value.x,
-			y: e.clientY - position.value.y
+			y: e.clientY - position.value.y,
 		}
 	} else if (e.button === 0) {
 		const target = e.target as HTMLElement
-		
+
 		if (target.closest('.viewer') && !target.closest('.image-container')) {
 			isSelecting.value = true
 			const rect = viewerRef.value?.getBoundingClientRect()
 			if (!rect) return
-			
+
 			const surfaceX = e.clientX - rect.left - position.value.x - 32
 			const surfaceY = e.clientY - rect.top - position.value.y - 32
-			
+
 			selectionStart.value = {
 				x: surfaceX,
-				y: surfaceY
+				y: surfaceY,
 			}
 			selectionBox.value = {
 				x: surfaceX,
 				y: surfaceY,
 				width: 0,
-				height: 0
+				height: 0,
 			}
-			
+
 			if (!e.shiftKey) {
 				selectedImageIndices.value = []
 				selectedImageIndex.value = -1
@@ -665,31 +714,31 @@ function handleViewerMouseMove(e: MouseEvent) {
 	if (isPanning.value) {
 		position.value = {
 			x: e.clientX - panStart.value.x,
-			y: e.clientY - panStart.value.y
+			y: e.clientY - panStart.value.y,
 		}
 	} else if (isSelecting.value) {
 		const rect = viewerRef.value?.getBoundingClientRect()
 		if (!rect) return
-		
+
 		const surfaceX = e.clientX - rect.left - position.value.x - 32
 		const surfaceY = e.clientY - rect.top - position.value.y - 32
-		
+
 		selectionBox.value = {
 			x: Math.min(selectionStart.value.x, surfaceX),
 			y: Math.min(selectionStart.value.y, surfaceY),
 			width: Math.abs(surfaceX - selectionStart.value.x),
-			height: Math.abs(surfaceY - selectionStart.value.y)
+			height: Math.abs(surfaceY - selectionStart.value.y),
 		}
-		
+
 		// Check which images are in the selection box
 		images.value.forEach((image, index) => {
 			const imageRect = {
 				x: cmToPixels(image.position.x),
 				y: cmToPixels(image.position.y),
 				width: cmToPixels(image.width),
-				height: cmToPixels(image.height)
+				height: cmToPixels(image.height),
 			}
-			
+
 			if (isRectIntersecting(selectionBox.value, imageRect)) {
 				if (!selectedImageIndices.value.includes(index)) {
 					selectedImageIndices.value.push(index)
@@ -708,7 +757,7 @@ function handleViewerMouseUp() {
 function removeImage(index: number) {
 	// Remove all selected images if the clicked image is selected
 	if (selectedImageIndices.value.includes(index)) {
-		selectedImageIndices.value.forEach(idx => {
+		selectedImageIndices.value.forEach((idx) => {
 			URL.revokeObjectURL(images.value[idx].url)
 		})
 		images.value = images.value.filter((_, idx) => !selectedImageIndices.value.includes(idx))
@@ -724,23 +773,23 @@ function removeImage(index: number) {
 function duplicateImage(index: number) {
 	const original = images.value[index]
 	const newUrl = URL.createObjectURL(new Blob([original.data], { type: `image/${original.type}` }))
-	
+
 	// Create copy with slight offset
 	const copy: ImageData = {
 		...original,
 		url: newUrl,
 		position: {
 			x: original.position.x + 1,
-			y: original.position.y + 1
-		}
+			y: original.position.y + 1,
+		},
 	}
-	
+
 	images.value.push(copy)
 }
 
 async function resetImageSize(index: number) {
 	const image = images.value[index]
-	
+
 	// Create temporary image to get dimensions
 	const img = new Image()
 	img.src = image.url
@@ -793,7 +842,7 @@ async function resetImageSize(index: number) {
 
 function clearAllImages() {
 	// Clean up URLs before removing
-	images.value.forEach(img => URL.revokeObjectURL(img.url))
+	images.value.forEach((img) => URL.revokeObjectURL(img.url))
 	images.value = []
 	selectedImageIndex.value = -1
 }
@@ -833,13 +882,13 @@ function newSurface() {
 
 async function saveProject() {
 	try {
-		const currentProject = projects.value.find(p => p.id === activeProjectId.value)
+		const currentProject = projects.value.find((p) => p.id === activeProjectId.value)
 		if (!currentProject) return
-		
+
 		const projectData = {
 			surfaceWidth: surfaceWidth.value,
 			surfaceHeight: surfaceHeight.value,
-			images: images.value.map(img => ({
+			images: images.value.map((img) => ({
 				...img,
 				data: Array.from(img.data), // Convert Uint8Array to regular array for JSON
 			})),
@@ -870,13 +919,13 @@ async function loadProject() {
 		if (selected) {
 			const fileContent = await readFile(selected as string)
 			const projectData = JSON.parse(new TextDecoder().decode(fileContent))
-			
+
 			// Convert array data back to Uint8Array for images
 			const processedImages = projectData.images.map((img: any) => ({
 				...img,
-				data: new Uint8Array(img.data)
+				data: new Uint8Array(img.data),
 			}))
-			
+
 			// Create new project from loaded data
 			const newProject: ProjectData = {
 				id: crypto.randomUUID(),
@@ -885,7 +934,7 @@ async function loadProject() {
 				surfaceHeight: projectData.surfaceHeight,
 				images: processedImages,
 				position: projectData.position || { x: 0, y: 0 },
-				zoom: projectData.zoom || 1
+				zoom: projectData.zoom || 1,
 			}
 			projects.value.push(newProject)
 			switchProject(newProject.id)
@@ -925,7 +974,7 @@ function arrangeAsTable() {
 		// Set position to cell position with gaps
 		image.position = {
 			x: col * (cellWidth + arrangeGap.value),
-			y: row * (cellHeight + arrangeGap.value)
+			y: row * (cellHeight + arrangeGap.value),
 		}
 
 		// Set dimensions to match cell size
@@ -939,13 +988,13 @@ function arrangeImages() {
 	if (images.value.length === 0) return
 
 	const rows: { y: number; remainingWidth: number }[] = [{ y: 0, remainingWidth: surfaceWidth.value }]
-	
+
 	// Sort images by height (tallest first) to optimize space usage
 	const sortedImages = [...images.value].sort((a, b) => b.height - a.height)
-	
+
 	for (const image of sortedImages) {
 		let placed = false
-		
+
 		// Try to fit in existing rows
 		for (const row of rows) {
 			// Check if image fits with gap
@@ -953,28 +1002,30 @@ function arrangeImages() {
 				// Place image in this row with gap
 				const x = surfaceWidth.value - row.remainingWidth
 				image.position = { x, y: row.y }
-				row.remainingWidth -= (image.width + arrangeGap.value)
+				row.remainingWidth -= image.width + arrangeGap.value
 				placed = true
 				break
 			}
 		}
-		
+
 		// If image doesn't fit in any existing row, create new row
 		if (!placed) {
 			// Find Y position for new row (below all existing content)
-			const maxY = Math.max(...rows.map(row => {
-				const imagesInRow = sortedImages.filter(img => img.position.y === row.y)
-				return row.y + (imagesInRow.length > 0 ? Math.max(...imagesInRow.map(img => img.height)) : 0)
-			}))
-			
+			const maxY = Math.max(
+				...rows.map((row) => {
+					const imagesInRow = sortedImages.filter((img) => img.position.y === row.y)
+					return row.y + (imagesInRow.length > 0 ? Math.max(...imagesInRow.map((img) => img.height)) : 0)
+				}),
+			)
+
 			// Add gap between rows
 			const newY = maxY + (rows.length > 1 ? arrangeGap.value : 0)
-			
+
 			// Create new row if it fits within surface height
 			if (newY + image.height <= surfaceHeight.value) {
 				rows.push({ y: newY, remainingWidth: surfaceWidth.value })
 				image.position = { x: 0, y: newY }
-				rows[rows.length - 1].remainingWidth -= (image.width + arrangeGap.value)
+				rows[rows.length - 1].remainingWidth -= image.width + arrangeGap.value
 			}
 		}
 	}
@@ -988,7 +1039,7 @@ function centerSurface() {
 	const rect = container.getBoundingClientRect()
 	position.value = {
 		x: (rect.width - cmToPixels(surfaceWidth.value) * zoom.value) / 2,
-		y: 20 // Fixed top padding
+		y: 20, // Fixed top padding
 	}
 }
 
@@ -998,23 +1049,22 @@ function constrainPosition(index: number) {
 
 	// Constrain X position
 	image.position.x = Math.max(0, Math.min(surfaceWidth.value - image.width, image.position.x))
-	
+
 	// Constrain Y position
 	image.position.y = Math.max(0, Math.min(surfaceHeight.value - image.height, image.position.y))
 }
 
 // Update isRectIntersecting to be more precise
-function isRectIntersecting(r1: { x: number, y: number, width: number, height: number }, 
-						  r2: { x: number, y: number, width: number, height: number }) {
+function isRectIntersecting(
+	r1: { x: number; y: number; width: number; height: number },
+	r2: { x: number; y: number; width: number; height: number },
+) {
 	const r1Right = r1.x + r1.width
 	const r1Bottom = r1.y + r1.height
 	const r2Right = r2.x + r2.width
 	const r2Bottom = r2.y + r2.height
-	
-	return !(r2.x > r1Right ||
-			r2Right < r1.x ||
-			r2.y > r1Bottom ||
-			r2Bottom < r1.y)
+
+	return !(r2.x > r1Right || r2Right < r1.x || r2.y > r1Bottom || r2Bottom < r1.y)
 }
 
 // Function to update memory info
@@ -1035,14 +1085,14 @@ async function updateMemoryInfo() {
 function createNewProject(name: string = 'Untitled') {
 	// Save current project if exists
 	if (activeProjectId.value) {
-		const currentProject = projects.value.find(p => p.id === activeProjectId.value)
+		const currentProject = projects.value.find((p) => p.id === activeProjectId.value)
 		if (currentProject) {
 			currentProject.surfaceWidth = surfaceWidth.value
 			currentProject.surfaceHeight = surfaceHeight.value
-			currentProject.images = images.value.map(img => ({
+			currentProject.images = images.value.map((img) => ({
 				...img,
 				data: img.data,
-				url: ''
+				url: '',
 			}))
 			currentProject.position = { ...position.value }
 			currentProject.zoom = zoom.value
@@ -1056,11 +1106,11 @@ function createNewProject(name: string = 'Untitled') {
 		surfaceHeight: 100,
 		images: [],
 		position: { x: 0, y: 0 },
-		zoom: 1
+		zoom: 1,
 	}
 	projects.value.push(newProject)
 	activeProjectId.value = newProject.id
-	
+
 	// Clear current state
 	images.value = []
 	surfaceWidth.value = 100
@@ -1074,32 +1124,32 @@ function createNewProject(name: string = 'Untitled') {
 function switchProject(projectId: string) {
 	// Save current project state
 	if (activeProjectId.value) {
-		const currentProject = projects.value.find(p => p.id === activeProjectId.value)
+		const currentProject = projects.value.find((p) => p.id === activeProjectId.value)
 		if (currentProject) {
 			currentProject.surfaceWidth = surfaceWidth.value
 			currentProject.surfaceHeight = surfaceHeight.value
-			currentProject.images = images.value.map(img => ({
+			currentProject.images = images.value.map((img) => ({
 				...img,
 				data: img.data,
-				url: '' // Don't store URLs as they need to be recreated
+				url: '', // Don't store URLs as they need to be recreated
 			}))
 			currentProject.position = { ...position.value }
 			currentProject.zoom = zoom.value
 		}
 	}
-	
+
 	// Load new project state
-	const project = projects.value.find(p => p.id === projectId)
+	const project = projects.value.find((p) => p.id === projectId)
 	if (project) {
 		activeProjectId.value = projectId
 		surfaceWidth.value = project.surfaceWidth
 		surfaceHeight.value = project.surfaceHeight
-		images.value = project.images.map(img => {
+		images.value = project.images.map((img) => {
 			const blob = new Blob([img.data], { type: `image/${img.type}` })
 			const url = URL.createObjectURL(blob)
 			return {
 				...img,
-				url
+				url,
 			}
 		})
 		position.value = { ...project.position }
@@ -1110,7 +1160,7 @@ function switchProject(projectId: string) {
 
 // Function to close project
 function closeProject(projectId: string) {
-	const index = projects.value.findIndex(p => p.id === projectId)
+	const index = projects.value.findIndex((p) => p.id === projectId)
 	if (index !== -1) {
 		projects.value.splice(index, 1)
 		if (projectId === activeProjectId.value) {
@@ -1131,7 +1181,7 @@ function startRenameProject(project: ProjectData, event: MouseEvent) {
 
 function finishRenameProject() {
 	if (editingProjectId.value) {
-		const project = projects.value.find(p => p.id === editingProjectId.value)
+		const project = projects.value.find((p) => p.id === editingProjectId.value)
 		if (project && editingProjectName.value.trim()) {
 			project.name = editingProjectName.value.trim()
 		}
@@ -1149,7 +1199,7 @@ onMounted(() => {
 	centerSurface()
 	updateMemoryInfo()
 	const memoryInterval = setInterval(updateMemoryInfo, 2000)
-	
+
 	onUnmounted(() => {
 		clearInterval(memoryInterval)
 	})
@@ -1172,11 +1222,8 @@ onUnmounted(() => {
 		<div class="toolbar mb-4 bg-[#2b2b2b] flex flex-col">
 			<!-- Top menu bar -->
 			<div class="flex items-center px-1 py-1 bg-[#1e1e1e] text-[#8b8b8b] text-sm">
-				<div class="relative" ref="fileMenuRef">
-					<button
-						class="px-3 py-1 hover:bg-[#3a3a3a] rounded"
-						@click.stop="isFileMenuOpen = !isFileMenuOpen"
-					>
+				<div ref="fileMenuRef" class="relative">
+					<button class="px-3 py-1 hover:bg-[#3a3a3a] rounded" @click.stop="isFileMenuOpen = !isFileMenuOpen">
 						File
 					</button>
 					<div
@@ -1231,9 +1278,9 @@ onUnmounted(() => {
 					:key="project.id"
 					class="flex items-center gap-2 px-3 py-1 rounded-t cursor-pointer text-sm"
 					:class="[
-						project.id === activeProjectId 
-							? 'bg-[#2b2b2b] text-white' 
-							: 'bg-[#252525] text-[#8b8b8b] hover:bg-[#2b2b2b]'
+						project.id === activeProjectId
+							? 'bg-[#2b2b2b] text-white'
+							: 'bg-[#252525] text-[#8b8b8b] hover:bg-[#2b2b2b]',
 					]"
 					@click="switchProject(project.id)"
 					@dblclick="startRenameProject(project, $event)"
@@ -1241,29 +1288,21 @@ onUnmounted(() => {
 					<div class="min-w-[60px]">
 						<input
 							v-if="editingProjectId === project.id"
+							ref="editInput"
 							v-model="editingProjectName"
+							v-focus
 							class="w-full px-1 py-0.5 bg-[#1e1e1e] text-white rounded border border-[#0a84ff] focus:outline-none"
 							@keyup.enter="finishRenameProject"
 							@blur="finishRenameProject"
 							@click.stop
-							ref="editInput"
-							v-focus
 						/>
 						<span v-else>{{ project.name }}</span>
 					</div>
-					<button
-						class="opacity-50 hover:opacity-100"
-						@click.stop="closeProject(project.id)"
-					>
-						×
-					</button>
+					<button class="opacity-50 hover:opacity-100" @click.stop="closeProject(project.id)">×</button>
 				</div>
-				
+
 				<!-- New project button -->
-				<button
-					class="px-3 py-1 text-[#8b8b8b] hover:bg-[#3a3a3a] rounded text-sm"
-					@click="createNewProject()"
-				>
+				<button class="px-3 py-1 text-[#8b8b8b] hover:bg-[#3a3a3a] rounded text-sm" @click="createNewProject()">
 					+
 				</button>
 			</div>
@@ -1364,23 +1403,23 @@ onUnmounted(() => {
 			<div class="flex-1 overflow-hidden bg-gray-900 rounded-lg">
 				<!-- Horizontal Ruler -->
 				<div class="h-8 ml-8 relative bg-[#2b2b2b] border-b border-[#3a3a3a] overflow-hidden">
-					<div 
+					<div
 						class="absolute h-full"
 						:style="{
 							transform: `translate(${position.x}px, 0) scale(${zoom})`,
 							transformOrigin: 'left',
-							width: cmToPixels(surfaceWidth) + 'px'
+							width: cmToPixels(surfaceWidth) + 'px',
 						}"
 					>
-						<div 
+						<div
 							v-for="i in Math.ceil(surfaceWidth)"
 							:key="i"
 							class="absolute top-0 h-full flex items-end"
 							:style="{ left: `${cmToPixels(i - 1)}px` }"
 						>
 							<div class="h-2 border-l border-[#8b8b8b]"></div>
-							<div 
-								v-if="(i - 1) % 5 === 0" 
+							<div
+								v-if="(i - 1) % 5 === 0"
 								class="absolute bottom-0 left-0 text-[10px] text-[#8b8b8b] transform -translate-x-1/2"
 							>
 								{{ i - 1 }}
@@ -1392,23 +1431,23 @@ onUnmounted(() => {
 				<div class="flex">
 					<!-- Vertical Ruler -->
 					<div class="w-8 relative bg-[#2b2b2b] border-r border-[#3a3a3a] overflow-hidden">
-						<div 
+						<div
 							class="absolute w-full"
 							:style="{
 								transform: `translate(0, ${position.y}px) scale(${zoom})`,
 								transformOrigin: 'top',
-								height: cmToPixels(surfaceHeight) + 'px'
+								height: cmToPixels(surfaceHeight) + 'px',
 							}"
 						>
-							<div 
+							<div
 								v-for="i in Math.ceil(surfaceHeight)"
 								:key="i"
 								class="absolute left-0 w-full flex items-center"
 								:style="{ top: `${cmToPixels(i - 1)}px` }"
 							>
 								<div class="w-2 border-t border-[#8b8b8b]"></div>
-								<div 
-									v-if="(i - 1) % 5 === 0" 
+								<div
+									v-if="(i - 1) % 5 === 0"
 									class="absolute left-3 text-[10px] text-[#8b8b8b] transform -translate-y-1/2"
 								>
 									{{ i - 1 }}
@@ -1420,13 +1459,13 @@ onUnmounted(() => {
 					<div
 						ref="viewerRef"
 						class="viewer-container flex-1 relative"
+						:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
 						@wheel="handleWheel"
 						@mousedown="handleViewerMouseDown"
 						@mousemove.stop="handleViewerMouseMove"
 						@mouseup.stop="handleViewerMouseUp"
-						:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
 					>
-						<div 
+						<div
 							class="viewer absolute"
 							:style="{
 								width: cmToPixels(surfaceWidth) + 'px',
@@ -1447,7 +1486,7 @@ onUnmounted(() => {
 										class="absolute border-l border-blue-500 border-dashed h-full"
 										:style="{
 											left: `${cmToPixels(snapGuides.vertical)}px`,
-											top: '0'
+											top: '0',
 										}"
 									></div>
 									<!-- Horizontal guide -->
@@ -1456,7 +1495,7 @@ onUnmounted(() => {
 										class="absolute border-t border-blue-500 border-dashed w-full"
 										:style="{
 											top: `${cmToPixels(snapGuides.horizontal)}px`,
-											left: '0'
+											left: '0',
 										}"
 									></div>
 								</div>
@@ -1468,7 +1507,7 @@ onUnmounted(() => {
 									class="absolute image-container"
 									:class="{
 										'outline outline-2 outline-blue-500': selectedImageIndices.includes(index),
-										'outline outline-2 outline-blue-700': isSnapping && index === draggedImageIndex
+										'outline outline-2 outline-blue-700': isSnapping && index === draggedImageIndex,
 									}"
 									:style="{
 										transform: `translate(${cmToPixels(image.position.x)}px, ${cmToPixels(image.position.y)}px) rotate(${image.rotation}deg)`,
@@ -1476,13 +1515,16 @@ onUnmounted(() => {
 										height: `${cmToPixels(image.height)}px`,
 										cursor: 'pointer',
 										transformOrigin: '0 0',
-										zIndex: '1'
+										zIndex: '1',
 									}"
 									@mousedown.stop="(e) => handleMouseDown(e, index)"
 								>
-									<div 
+									<div
 										class="relative group h-full w-full"
-										:class="{ 'cursor-grabbing': isDragging && draggedImageIndex === index, 'cursor-grab': !isDragging }"
+										:class="{
+											'cursor-grabbing': isDragging && draggedImageIndex === index,
+											'cursor-grab': !isDragging,
+										}"
 									>
 										<div
 											class="w-full h-full"
@@ -1510,8 +1552,11 @@ onUnmounted(() => {
 												↻
 											</button>
 										</div>
-										<div class="absolute bottom-0 left-0 bg-black bg-opacity-50 text-white text-xs px-1 rounded">
-											{{ Math.round(image.width * 10) / 10 }}cm × {{ Math.round(image.height * 10) / 10 }}cm
+										<div
+											class="absolute bottom-0 left-0 bg-black bg-opacity-50 text-white text-xs px-1 rounded"
+										>
+											{{ Math.round(image.width * 10) / 10 }}cm ×
+											{{ Math.round(image.height * 10) / 10 }}cm
 										</div>
 										<div
 											class="absolute bottom-0 right-0 w-4 h-4 bg-white opacity-50 hover:opacity-100 cursor-se-resize"
@@ -1529,11 +1574,13 @@ onUnmounted(() => {
 										top: `${selectionBox.y}px`,
 										width: `${selectionBox.width}px`,
 										height: `${selectionBox.height}px`,
-										zIndex: '2'
+										zIndex: '2',
 									}"
 								></div>
 							</template>
-							<div v-else class="h-full flex items-center justify-center text-gray-400">Add images to create a PDF</div>
+							<div v-else class="h-full flex items-center justify-center text-gray-400">
+								Add images to create a PDF
+							</div>
 						</div>
 					</div>
 				</div>
@@ -1575,8 +1622,8 @@ onUnmounted(() => {
 					<div>
 						<label class="block text-sm text-gray-400">Dimensions</label>
 						<div>
-							Width: {{ Math.round(images[selectedImageIndex].width * 10) / 10 }}cm
-							Height: {{ Math.round(images[selectedImageIndex].height * 10) / 10 }}cm
+							Width: {{ Math.round(images[selectedImageIndex].width * 10) / 10 }}cm Height:
+							{{ Math.round(images[selectedImageIndex].height * 10) / 10 }}cm
 						</div>
 					</div>
 					<div>
@@ -1638,8 +1685,7 @@ onUnmounted(() => {
 .viewer {
 	position: absolute;
 	background-image: linear-gradient(45deg, #2c2c2c 25%, transparent 25%),
-		linear-gradient(-45deg, #2c2c2c 25%, transparent 25%), 
-		linear-gradient(45deg, transparent 75%, #2c2c2c 75%),
+		linear-gradient(-45deg, #2c2c2c 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #2c2c2c 75%),
 		linear-gradient(-45deg, transparent 75%, #2c2c2c 75%);
 	background-size: 20px 20px;
 	background-position:
