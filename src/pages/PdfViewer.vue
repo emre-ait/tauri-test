@@ -5,6 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import ExifReader from 'exif-reader'
 import { platform } from '@tauri-apps/plugin-os'
+import { invoke } from '@tauri-apps/api/core'
 
 interface ImageData {
 	data: Uint8Array
@@ -87,7 +88,7 @@ const isLoadingImage = ref(false)
 
 // Add custom directive for auto-focus
 const vFocus = {
-	mounted: (el: HTMLElement) => el.focus(),
+	mounted: (el: HTMLElement) => el.focus(),,
 }
 
 function updateSurfaceDimensions(width: number, height: number) {
@@ -136,6 +137,7 @@ function handleMouseMove(e: MouseEvent) {
 		const deltaX = pixelsToCm(e.clientX - startPos.value.x) / zoom.value
 		const deltaY = pixelsToCm(e.clientY - startPos.value.y) / zoom.value
 
+
 		// Calculate new dimensions
 		let newWidth = Math.max(1, startDimensions.value.width + deltaX)
 		let newHeight = Math.max(1, startDimensions.value.height + deltaY)
@@ -173,6 +175,8 @@ function handleMouseMove(e: MouseEvent) {
 		const moveSpeed = Math.sqrt(offsetX * offsetX + offsetY * offsetY)
 		if (moveSpeed < 0.5) {
 			// Only snap when moving very slowly
+		if (moveSpeed < 0.5) {
+			// Only snap when moving very slowly
 			images.value.forEach((otherImage, index) => {
 				if (!selectedImageIndices.value.includes(index)) {
 					// Vertical alignments (X-axis)
@@ -180,8 +184,11 @@ function handleMouseMove(e: MouseEvent) {
 					const currentRight = newX + image.width
 					const currentCenterX = newX + image.width / 2
 
+					const currentCenterX = newX + image.width / 2
+
 					const otherLeft = otherImage.position.x
 					const otherRight = otherImage.position.x + otherImage.width
+					const otherCenterX = otherImage.position.x + otherImage.width / 2
 					const otherCenterX = otherImage.position.x + otherImage.width / 2
 
 					const verticalAlignments = [
@@ -193,7 +200,7 @@ function handleMouseMove(e: MouseEvent) {
 						{ pos: currentRight, target: otherCenterX }, // Right to Center
 						{ pos: currentCenterX, target: otherLeft }, // Center to Left
 						{ pos: currentCenterX, target: otherRight }, // Center to Right
-						{ pos: currentCenterX, target: otherCenterX }, // Center to Center
+						{ pos: currentCenterX, target: otherCenterX },, // Center to Center
 					]
 
 					for (const align of verticalAlignments) {
@@ -202,6 +209,8 @@ function handleMouseMove(e: MouseEvent) {
 							hasSnapped = true
 							snapGuides.value.vertical = align.target
 							const offset = align.pos - currentLeft
+							const snapStrength = 1 - distance / snapThreshold.value
+							const targetOffset = align.target - offset - image.position.x
 							const snapStrength = 1 - distance / snapThreshold.value
 							const targetOffset = align.target - offset - image.position.x
 							finalOffsetX = offsetX + (targetOffset - offsetX) * snapStrength
@@ -214,8 +223,11 @@ function handleMouseMove(e: MouseEvent) {
 					const currentBottom = newY + image.height
 					const currentCenterY = newY + image.height / 2
 
+					const currentCenterY = newY + image.height / 2
+
 					const otherTop = otherImage.position.y
 					const otherBottom = otherImage.position.y + otherImage.height
+					const otherCenterY = otherImage.position.y + otherImage.height / 2
 					const otherCenterY = otherImage.position.y + otherImage.height / 2
 
 					const horizontalAlignments = [
@@ -227,7 +239,7 @@ function handleMouseMove(e: MouseEvent) {
 						{ pos: currentBottom, target: otherCenterY }, // Bottom to Center
 						{ pos: currentCenterY, target: otherTop }, // Center to Top
 						{ pos: currentCenterY, target: otherBottom }, // Center to Bottom
-						{ pos: currentCenterY, target: otherCenterY }, // Center to Center
+						{ pos: currentCenterY, target: otherCenterY },, // Center to Center
 					]
 
 					for (const align of horizontalAlignments) {
@@ -236,6 +248,8 @@ function handleMouseMove(e: MouseEvent) {
 							hasSnapped = true
 							snapGuides.value.horizontal = align.target
 							const offset = align.pos - currentTop
+							const snapStrength = 1 - distance / snapThreshold.value
+							const targetOffset = align.target - offset - image.position.y
 							const snapStrength = 1 - distance / snapThreshold.value
 							const targetOffset = align.target - offset - image.position.y
 							finalOffsetY = offsetY + (targetOffset - offsetY) * snapStrength
@@ -296,6 +310,34 @@ function handleMouseUp() {
 	snapGuides.value = { vertical: null, horizontal: null }
 }
 
+async function rotateRight(index: number) {
+	const image = images.value[index]
+	try {
+		// Send image data to Rust for rotation
+		const rotatedData = await invoke('rotate_image', {
+			imageData: {
+				data: Array.from(image.data),
+				image_type: image.type,
+				width: image.width,
+				height: image.height,
+				filename: image.filename,
+			},
+			angle: 90,
+		})
+
+		// Update image with rotated data
+		image.data = new Uint8Array(rotatedData as number[])
+		image.rotation = (image.rotation + 90) % 360
+
+		// Update image URL
+		URL.revokeObjectURL(image.url)
+		const blob = new Blob([image.data], { type: `image/${image.type}` })
+		image.url = URL.createObjectURL(blob)
+	} catch (error) {
+		console.error('Error rotating image:', error)
+	}
+}
+
 function rotateLeft(index: number) {
 	if (selectedImageIndices.value.includes(index)) {
 		selectedImageIndices.value.forEach((idx) => {
@@ -304,10 +346,6 @@ function rotateLeft(index: number) {
 	} else {
 		images.value[index].rotation = (images.value[index].rotation - 90) % 360
 	}
-}
-
-function rotateRight(index: number) {
-	images.value[index].rotation = (images.value[index].rotation + 90) % 360
 }
 
 function handleMouseDown(e: MouseEvent, index: number) {
@@ -327,8 +365,10 @@ function handleMouseDown(e: MouseEvent, index: number) {
 			selectedImageIndex.value = index
 		} else {
 			selectedImageIndices.value.splice(selectionIndex, 1)
-			selectedImageIndex.value = selectedImageIndices.value.length > 0 ? 
-				selectedImageIndices.value[selectedImageIndices.value.length - 1] : -1
+			selectedImageIndex.value =
+				selectedImageIndices.value.length > 0
+					? selectedImageIndices.value[selectedImageIndices.value.length - 1]
+					: -1
 		}
 	} else if (selectedImageIndices.value.includes(index)) {
 		// Clicking an already selected image - keep the selection
@@ -352,57 +392,90 @@ async function addImage() {
 			multiple: false,
 			filters: [
 				{
-					name: 'Image',
+					name: 'Supported Files',
+					extensions: ['png', 'jpg', 'jpeg', 'mif'],
+				},
+				{
+					name: 'Image Files',
 					extensions: ['png', 'jpg', 'jpeg'],
+				},
+				{
+					name: 'MIF Files',
+					extensions: ['mif'],
 				},
 			],
 		})
 
-		if (!selected) {
-			return
-		}
+		if (selected) {
+			const imageBytes = await readFile(selected as string)
+			const type = selected.toLowerCase().endsWith('.png') ? 'png' : 'jpg'
+			const blob = new Blob([imageBytes], { type: `image/${type}` })
+			const url = URL.createObjectURL(blob)
+			
+			const filename = (selected as string).split(/[/\\]/).pop() || ''
 
-		// Start loading only after file is selected and we're about to read it
-		isLoadingImage.value = true
-		const filePath = selected as string
-		const extension = filePath.toLowerCase().split('.').pop() || ''
-		const imageBytes = await readFile(filePath)
-		const type = extension === 'png' ? 'png' : 'jpg'
-		const blob = new Blob([imageBytes], { type: `image/${type}` })
-		const url = URL.createObjectURL(blob)
-		const filename = filePath.split(/[/\\]/).pop() || ''
-
-		// Create an image element to get dimensions
-		const img = new Image()
-		await new Promise((resolve) => {
-			img.onload = resolve
+			// Create temporary image to get dimensions
+			const img = new Image()
 			img.src = url
-		})
+			await new Promise((resolve) => {
+				img.onload = resolve
+			})
 
-		// Convert pixel dimensions to cm (assuming 96 DPI)
-		const dpi = 96
-		const width = (img.width / dpi) * 2.54
-		const height = (img.height / dpi) * 2.54
+			// Try to get resolution from EXIF data
+			let xResolution = 72 // Default resolution
+			let yResolution = 72
+			let resolutionUnit = 2 // 2 = inches, 3 = cm
 
-		images.value.push({
-			data: imageBytes,
-			type,
-			url,
-			position: { x: 0, y: 0 },
-			rotation: 0,
-			scale: 1,
-			width,
-			height,
-			isResizing: false,
-			filename,
-		})
+			try {
+				const exifData = ExifReader.load(imageBytes)
+				if (exifData?.exif) {
+					xResolution = exifData.exif.XResolution || xResolution
+					yResolution = exifData.exif.YResolution || yResolution
+					resolutionUnit = exifData.exif.ResolutionUnit || resolutionUnit
+				}
+			} catch (e) {
+				console.warn('Could not read EXIF data, using default resolution')
+			}
 
-		await updatePDF()
+			// Convert to DPI if resolution unit is cm
+			if (resolutionUnit === 3) {
+				xResolution = xResolution * 2.54
+				yResolution = yResolution * 2.54
+			}
+
+			// Convert pixel dimensions to cm
+			const widthCm = (img.width / xResolution) * 2.54
+			const heightCm = (img.height / yResolution) * 2.54
+
+			// Only scale down if larger than surface
+			let finalWidthCm = widthCm
+			let finalHeightCm = heightCm
+
+			if (widthCm > surfaceWidth.value || heightCm > surfaceHeight.value) {
+				const scaleW = surfaceWidth.value / widthCm
+				const scaleH = surfaceHeight.value / heightCm
+				const scale = Math.min(scaleW, scaleH)
+				finalWidthCm *= scale
+				finalHeightCm *= scale
+			}
+
+			images.value.push({
+				data: imageBytes,
+				type,
+				url,
+				position: { x: 0, y: 0 },
+				rotation: 0,
+				scale: 1,
+				width: finalWidthCm,
+				height: finalHeightCm,
+				isResizing: false,
+				filename,
+			})
+
+			await updatePDF()
+		}
 	} catch (error) {
-		console.error('Error processing file:', error)
-	} finally {
-		isLoadingImage.value = false
-		isFileMenuOpen.value = false  // Close menu after completion
+		console.error('Error processing image:', error)
 	}
 }
 
@@ -847,33 +920,29 @@ async function loadProject() {
 			filters: [{ name: 'JSON', extensions: ['json'] }],
 		})
 
-		if (!selected) {
-			return
+		if (selected) {
+			const fileContent = await readFile(selected as string)
+			const projectData = JSON.parse(new TextDecoder().decode(fileContent))
+			
+			// Convert array data back to Uint8Array for images
+			const processedImages = projectData.images.map((img: any) => ({
+				...img,
+				data: new Uint8Array(img.data)
+			}))
+			
+			// Create new project from loaded data
+			const newProject: ProjectData = {
+				id: crypto.randomUUID(),
+				name: (selected as string).split(/[/\\]/).pop()?.replace('.json', '') || 'Untitled',
+				surfaceWidth: projectData.surfaceWidth,
+				surfaceHeight: projectData.surfaceHeight,
+				images: processedImages,
+				position: projectData.position || { x: 0, y: 0 },
+				zoom: projectData.zoom || 1
+			}
+			projects.value.push(newProject)
+			switchProject(newProject.id)
 		}
-
-		// Start loading only after file is selected and we're about to read it
-		isLoadingProject.value = true
-		const fileContent = await readFile(selected as string)
-		const projectData = JSON.parse(new TextDecoder().decode(fileContent))
-
-		// Convert array data back to Uint8Array for images
-		const processedImages = projectData.images.map((img: any) => ({
-			...img,
-			data: new Uint8Array(img.data),
-		}))
-
-		// Create new project from loaded data
-		const newProject: ProjectData = {
-			id: crypto.randomUUID(),
-			name: (selected as string).split(/[/\\]/).pop()?.replace('.json', '') || 'Untitled',
-			surfaceWidth: projectData.surfaceWidth,
-			surfaceHeight: projectData.surfaceHeight,
-			images: processedImages,
-			position: projectData.position || { x: 0, y: 0 },
-			zoom: projectData.zoom || 1,
-		}
-		projects.value.push(newProject)
-		switchProject(newProject.id)
 	} catch (error) {
 		console.error('Error loading project:', error)
 	} finally {
@@ -1408,24 +1477,9 @@ onUnmounted(() => {
 						@mousedown="handleViewerMouseDown"
 						@mousemove.stop="handleViewerMouseMove"
 						@mouseup.stop="handleViewerMouseUp"
+						:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
 					>
-						<!-- Loading overlay for the surface -->
-						<div
-							v-if="isLoadingProject || isLoadingImage"
-							class="absolute inset-0 z-50 backdrop-blur-[2px] flex items-center justify-center"
-							style="pointer-events: none;"
-						>
-							<div 
-								class="bg-[#2b2b2b] bg-opacity-80 rounded-lg p-6 flex flex-col items-center gap-4 shadow-lg"
-							>
-								<div class="w-8 h-8 border-4 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"></div>
-								<div class="text-white text-sm">
-									{{ isLoadingProject ? 'Loading Project...' : 'Processing Image...' }}
-								</div>
-							</div>
-						</div>
-
-						<div
+						<div 
 							class="viewer absolute"
 							:style="{
 								width: cmToPixels(surfaceWidth) + 'px',
