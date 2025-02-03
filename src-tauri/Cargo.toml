@@ -7,25 +7,22 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[lib]
-# The `_lib` suffix may seem redundant but it is necessary
-# to make the lib name unique and wouldn't conflict with the bin name.
-# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "tauri_test_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+[[bin]]
+name = "tauri-test"
+path = "src/main.rs"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.0.0-beta.9", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tauri-plugin-os = "2"
-image = "0.24.7"
-phf = { version = "0.11.3", features = ["macros"] }
-byteorder = "1.5.0"
+tauri = { version = "2.0.0-beta.12", features = [] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tauri-plugin-os = "2.0.0-beta.2"
+tauri-plugin-dialog = "2.0.0-beta.2"
+tauri-plugin-fs = "2.0.0-beta.2"
+tauri-plugin-opener = "2.0.0-beta.2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
 

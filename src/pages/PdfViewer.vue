@@ -3,9 +3,7 @@ import { ref, onUnmounted, onMounted } from 'vue'
 import { PDFDocument } from 'pdf-lib'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
-import ExifReader from 'exif-reader'
 import { platform } from '@tauri-apps/plugin-os'
-import { invoke } from '@tauri-apps/api/core'
 
 interface ImageData {
 	data: Uint8Array
@@ -88,7 +86,7 @@ const isLoadingImage = ref(false)
 
 // Add custom directive for auto-focus
 const vFocus = {
-	mounted: (el: HTMLElement) => el.focus(),,
+	mounted: (el: HTMLElement) => el.focus()
 }
 
 function updateSurfaceDimensions(width: number, height: number) {
@@ -175,8 +173,6 @@ function handleMouseMove(e: MouseEvent) {
 		const moveSpeed = Math.sqrt(offsetX * offsetX + offsetY * offsetY)
 		if (moveSpeed < 0.5) {
 			// Only snap when moving very slowly
-		if (moveSpeed < 0.5) {
-			// Only snap when moving very slowly
 			images.value.forEach((otherImage, index) => {
 				if (!selectedImageIndices.value.includes(index)) {
 					// Vertical alignments (X-axis)
@@ -184,11 +180,8 @@ function handleMouseMove(e: MouseEvent) {
 					const currentRight = newX + image.width
 					const currentCenterX = newX + image.width / 2
 
-					const currentCenterX = newX + image.width / 2
-
 					const otherLeft = otherImage.position.x
 					const otherRight = otherImage.position.x + otherImage.width
-					const otherCenterX = otherImage.position.x + otherImage.width / 2
 					const otherCenterX = otherImage.position.x + otherImage.width / 2
 
 					const verticalAlignments = [
@@ -200,7 +193,7 @@ function handleMouseMove(e: MouseEvent) {
 						{ pos: currentRight, target: otherCenterX }, // Right to Center
 						{ pos: currentCenterX, target: otherLeft }, // Center to Left
 						{ pos: currentCenterX, target: otherRight }, // Center to Right
-						{ pos: currentCenterX, target: otherCenterX },, // Center to Center
+						{ pos: currentCenterX, target: otherCenterX }, // Center to Center
 					]
 
 					for (const align of verticalAlignments) {
@@ -209,8 +202,6 @@ function handleMouseMove(e: MouseEvent) {
 							hasSnapped = true
 							snapGuides.value.vertical = align.target
 							const offset = align.pos - currentLeft
-							const snapStrength = 1 - distance / snapThreshold.value
-							const targetOffset = align.target - offset - image.position.x
 							const snapStrength = 1 - distance / snapThreshold.value
 							const targetOffset = align.target - offset - image.position.x
 							finalOffsetX = offsetX + (targetOffset - offsetX) * snapStrength
@@ -223,11 +214,8 @@ function handleMouseMove(e: MouseEvent) {
 					const currentBottom = newY + image.height
 					const currentCenterY = newY + image.height / 2
 
-					const currentCenterY = newY + image.height / 2
-
 					const otherTop = otherImage.position.y
 					const otherBottom = otherImage.position.y + otherImage.height
-					const otherCenterY = otherImage.position.y + otherImage.height / 2
 					const otherCenterY = otherImage.position.y + otherImage.height / 2
 
 					const horizontalAlignments = [
@@ -239,7 +227,7 @@ function handleMouseMove(e: MouseEvent) {
 						{ pos: currentBottom, target: otherCenterY }, // Bottom to Center
 						{ pos: currentCenterY, target: otherTop }, // Center to Top
 						{ pos: currentCenterY, target: otherBottom }, // Center to Bottom
-						{ pos: currentCenterY, target: otherCenterY },, // Center to Center
+						{ pos: currentCenterY, target: otherCenterY }, // Center to Center
 					]
 
 					for (const align of horizontalAlignments) {
@@ -248,8 +236,6 @@ function handleMouseMove(e: MouseEvent) {
 							hasSnapped = true
 							snapGuides.value.horizontal = align.target
 							const offset = align.pos - currentTop
-							const snapStrength = 1 - distance / snapThreshold.value
-							const targetOffset = align.target - offset - image.position.y
 							const snapStrength = 1 - distance / snapThreshold.value
 							const targetOffset = align.target - offset - image.position.y
 							finalOffsetY = offsetY + (targetOffset - offsetY) * snapStrength
@@ -392,90 +378,65 @@ async function addImage() {
 			multiple: false,
 			filters: [
 				{
-					name: 'Supported Files',
-					extensions: ['png', 'jpg', 'jpeg', 'mif'],
-				},
-				{
 					name: 'Image Files',
 					extensions: ['png', 'jpg', 'jpeg'],
-				},
-				{
-					name: 'MIF Files',
-					extensions: ['mif'],
 				},
 			],
 		})
 
-		if (selected) {
-			const imageBytes = await readFile(selected as string)
-			const type = selected.toLowerCase().endsWith('.png') ? 'png' : 'jpg'
-			const blob = new Blob([imageBytes], { type: `image/${type}` })
-			const url = URL.createObjectURL(blob)
-			
-			const filename = (selected as string).split(/[/\\]/).pop() || ''
+		if (!selected) return
 
-			// Create temporary image to get dimensions
-			const img = new Image()
+		isLoadingImage.value = true
+		const filePath = selected as string
+		const extension = filePath.toLowerCase().split('.').pop() || ''
+		const imageBytes = await readFile(filePath)
+		const type = extension === 'png' ? 'png' : 'jpg'
+		const blob = new Blob([imageBytes], { type: `image/${type}` })
+		const url = URL.createObjectURL(blob)
+		const filename = filePath.split(/[/\\]/).pop() || ''
+
+		// Create an image element to get dimensions
+		const img = new Image()
+		await new Promise((resolve) => {
+			img.onload = resolve
 			img.src = url
-			await new Promise((resolve) => {
-				img.onload = resolve
-			})
+		})
 
-			// Try to get resolution from EXIF data
-			let xResolution = 72 // Default resolution
-			let yResolution = 72
-			let resolutionUnit = 2 // 2 = inches, 3 = cm
+		// Calculate dimensions (assuming 96 DPI)
+		const dpi = 96
+		const widthCm = (img.width / dpi) * 2.54
+		const heightCm = (img.height / dpi) * 2.54
 
-			try {
-				const exifData = ExifReader.load(imageBytes)
-				if (exifData?.exif) {
-					xResolution = exifData.exif.XResolution || xResolution
-					yResolution = exifData.exif.YResolution || yResolution
-					resolutionUnit = exifData.exif.ResolutionUnit || resolutionUnit
-				}
-			} catch (e) {
-				console.warn('Could not read EXIF data, using default resolution')
-			}
+		// Scale if needed
+		let finalWidthCm = widthCm
+		let finalHeightCm = heightCm
 
-			// Convert to DPI if resolution unit is cm
-			if (resolutionUnit === 3) {
-				xResolution = xResolution * 2.54
-				yResolution = yResolution * 2.54
-			}
-
-			// Convert pixel dimensions to cm
-			const widthCm = (img.width / xResolution) * 2.54
-			const heightCm = (img.height / yResolution) * 2.54
-
-			// Only scale down if larger than surface
-			let finalWidthCm = widthCm
-			let finalHeightCm = heightCm
-
-			if (widthCm > surfaceWidth.value || heightCm > surfaceHeight.value) {
-				const scaleW = surfaceWidth.value / widthCm
-				const scaleH = surfaceHeight.value / heightCm
-				const scale = Math.min(scaleW, scaleH)
-				finalWidthCm *= scale
-				finalHeightCm *= scale
-			}
-
-			images.value.push({
-				data: imageBytes,
-				type,
-				url,
-				position: { x: 0, y: 0 },
-				rotation: 0,
-				scale: 1,
-				width: finalWidthCm,
-				height: finalHeightCm,
-				isResizing: false,
-				filename,
-			})
-
-			await updatePDF()
+		if (widthCm > surfaceWidth.value || heightCm > surfaceHeight.value) {
+			const scaleW = surfaceWidth.value / widthCm
+			const scaleH = surfaceHeight.value / heightCm
+			const scale = Math.min(scaleW, scaleH)
+			finalWidthCm *= scale
+			finalHeightCm *= scale
 		}
+
+		images.value.push({
+			data: imageBytes,
+			type,
+			url,
+			position: { x: 0, y: 0 },
+			rotation: 0,
+			scale: 1,
+			width: finalWidthCm,
+			height: finalHeightCm,
+			isResizing: false,
+			filename,
+		})
+
+		await updatePDF()
 	} catch (error) {
-		console.error('Error processing image:', error)
+		console.error('Error processing file:', error)
+	} finally {
+		isLoadingImage.value = false
 	}
 }
 
@@ -542,40 +503,120 @@ async function updatePDF() {
 }
 
 async function downloadPDF() {
+	console.log('Downloading PDF')
 	if (!pdfDoc.value) return
 	console.log('Downloading PDF')
 	try {
-		// Update PDF first
-		await updatePDF()
+		// Create a new PDF document
+		const pdfDoc = await PDFDocument.create()
+		
+		// Add metadata page
+		const metadataPage = pdfDoc.addPage([800, 1000])
+		const { width, height } = metadataPage.getSize()
+		
+		// Save project data as text in PDF
+		const projectData = {
+			surfaceWidth: surfaceWidth.value,
+			surfaceHeight: surfaceHeight.value,
+			images: images.value.map(img => ({
+				position: img.position,
+				rotation: img.rotation,
+				scale: img.scale,
+				width: img.width,
+				height: img.height,
+				filename: img.filename
+			}))
+		}
+		
+		// Write project data
+		metadataPage.drawText('Project Metadata:', {
+			x: 50,
+			y: height - 50,
+			size: 14
+		})
+		
+		metadataPage.drawText(JSON.stringify(projectData, null, 2), {
+			x: 50,
+			y: height - 100,
+			size: 10,
+			lineHeight: 12,
+			maxWidth: width - 100
+		})
+
+		// Add image preview page
+		const imagePage = pdfDoc.addPage([800, 1000])
+
+		// Calculate grid layout for images
+		const imagesPerRow = Math.ceil(Math.sqrt(images.value.length))
+		const rows = Math.ceil(images.value.length / imagesPerRow)
+
+		const pageWidth = imagePage.getWidth()
+		const pageHeight = imagePage.getHeight()
+		const padding = 20
+		const availableWidth = pageWidth - padding * 2
+		const availableHeight = pageHeight - padding * 2
+
+		const imageWidth = availableWidth / imagesPerRow
+		const imageHeight = availableHeight / rows
+
+		// Add all images to the page
+		for (let i = 0; i < images.value.length; i++) {
+			const imageData = images.value[i]
+			const image =
+				imageData.type === 'png'
+					? await pdfDoc.embedPng(imageData.data)
+					: await pdfDoc.embedJpg(imageData.data)
+
+			// Calculate position in grid
+			const row = Math.floor(i / imagesPerRow)
+			const col = i % imagesPerRow
+
+			// Calculate dimensions while maintaining aspect ratio
+			const { width, height } = image.scale(1)
+			const aspectRatio = width / height
+
+			let scaledWidth = imageWidth - padding
+			let scaledHeight = scaledWidth / aspectRatio
+
+			if (scaledHeight > imageHeight - padding) {
+				scaledHeight = imageHeight - padding
+				scaledWidth = scaledHeight * aspectRatio
+			}
+
+			// Calculate position to center image in its grid cell
+			const x = padding + col * imageWidth + (imageWidth - scaledWidth) / 2
+			const y = pageHeight - padding - (row + 1) * imageHeight + (imageHeight - scaledHeight) / 2
+
+			// Add image info
+			imagePage.drawText(`${imageData.filename} (${Math.round(imageData.width)}×${Math.round(imageData.height)}cm)`, {
+				x: x,
+				y: y - 15,
+				size: 8
+			})
+
+			imagePage.drawImage(image, {
+				x,
+				y,
+				width: scaledWidth,
+				height: scaledHeight,
+			})
+		}
 
 		// Save the PDF
-		const pdfBytes = await pdfDoc.value.save()
-
-		// Create blob and download
+		const pdfBytes = await pdfDoc.save()
 		const blob = new Blob([pdfBytes], { type: 'application/pdf' })
 		const url = URL.createObjectURL(blob)
 
 		const link = document.createElement('a')
 		link.href = url
-		link.download = 'images.pdf'
+		link.download = 'project.pdf'
 		document.body.appendChild(link)
 		link.click()
 		document.body.removeChild(link)
 		URL.revokeObjectURL(url)
 
-		console.log('PDF downloaded')
-		//see size of pdf and dimensions
-		console.log('PDF size:', pdfBytes.byteLength)
-		console.log(
-			'PDF dimensions:',
-			pdfDoc.value.getPageCount(),
-			pdfDoc.value.getPage(0).getWidth(),
-			pdfDoc.value.getPage(0).getHeight(),
-		)
 	} catch (error) {
 		console.error('Error downloading PDF:', error)
-	} finally {
-		console.log('PDF downloaded')
 	}
 }
 
@@ -920,34 +961,34 @@ async function loadProject() {
 			filters: [{ name: 'JSON', extensions: ['json'] }],
 		})
 
-		if (selected) {
-			const fileContent = await readFile(selected as string)
-			const projectData = JSON.parse(new TextDecoder().decode(fileContent))
-			
-			// Convert array data back to Uint8Array for images
-			const processedImages = projectData.images.map((img: any) => ({
-				...img,
-				data: new Uint8Array(img.data)
-			}))
-			
-			// Create new project from loaded data
-			const newProject: ProjectData = {
-				id: crypto.randomUUID(),
-				name: (selected as string).split(/[/\\]/).pop()?.replace('.json', '') || 'Untitled',
-				surfaceWidth: projectData.surfaceWidth,
-				surfaceHeight: projectData.surfaceHeight,
-				images: processedImages,
-				position: projectData.position || { x: 0, y: 0 },
-				zoom: projectData.zoom || 1
-			}
-			projects.value.push(newProject)
-			switchProject(newProject.id)
+		if (!selected) return
+
+		isLoadingProject.value = true
+		const fileContent = await readFile(selected as string)
+		const projectData = JSON.parse(new TextDecoder().decode(fileContent))
+		
+		// Convert array data back to Uint8Array for images
+		const processedImages = projectData.images.map((img: any) => ({
+			...img,
+			data: new Uint8Array(img.data)
+		}))
+		
+		// Create new project from loaded data
+		const newProject: ProjectData = {
+			id: crypto.randomUUID(),
+			name: (selected as string).split(/[/\\]/).pop()?.replace('.json', '') || 'Untitled',
+			surfaceWidth: projectData.surfaceWidth,
+			surfaceHeight: projectData.surfaceHeight,
+			images: processedImages,
+			position: projectData.position || { x: 0, y: 0 },
+			zoom: projectData.zoom || 1
 		}
+		projects.value.push(newProject)
+		switchProject(newProject.id)
 	} catch (error) {
 		console.error('Error loading project:', error)
 	} finally {
 		isLoadingProject.value = false
-		isFileMenuOpen.value = false  // Close menu after completion
 	}
 }
 
@@ -1225,6 +1266,20 @@ onUnmounted(() => {
 
 <template>
 	<div class="pb-4 h-screen flex flex-col">
+		<!-- Loading Overlay -->
+		<div
+			v-if="isLoadingProject || isLoadingImage"
+			class="absolute inset-0 z-50 backdrop-blur-[2px] flex items-center justify-center"
+			style="pointer-events: none;"
+		>
+			<div class="bg-[#2b2b2b] bg-opacity-80 rounded-lg p-6 flex flex-col items-center gap-4 shadow-lg">
+				<div class="w-8 h-8 border-4 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"></div>
+				<div class="text-white text-sm">
+					{{ isLoadingProject ? 'Loading Project...' : 'Processing Image...' }}
+				</div>
+			</div>
+		</div>
+
 		<!-- Existing toolbar -->
 		<div class="toolbar mb-4 bg-[#2b2b2b] flex flex-col">
 			<!-- Top menu bar -->
@@ -1472,12 +1527,14 @@ onUnmounted(() => {
 					<div
 						ref="viewerRef"
 						class="viewer-container flex-1 relative"
-						:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
+						:class="{
+							'cursor-grab': isSpacePressed,
+							'cursor-grabbing': isPanning
+						}"
 						@wheel="handleWheel"
 						@mousedown="handleViewerMouseDown"
 						@mousemove.stop="handleViewerMouseMove"
 						@mouseup.stop="handleViewerMouseUp"
-						:class="{ 'cursor-grab': isSpacePressed, 'cursor-grabbing': isPanning }"
 					>
 						<div 
 							class="viewer absolute"
