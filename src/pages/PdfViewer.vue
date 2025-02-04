@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onUnmounted, onMounted } from 'vue'
-import { PDFDocument } from 'pdf-lib'
+import { error, PDFDocument } from 'pdf-lib'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { platform } from '@tauri-apps/plugin-os'
+import { invoke } from '@tauri-apps/api/core'
 
 interface ImageData {
 	data: Uint8Array
@@ -84,9 +85,12 @@ const editingProjectName = ref('')
 const isLoadingProject = ref(false)
 const isLoadingImage = ref(false)
 
+// Add this ref with other refs
+const isPythonProcessing = ref(false)
+
 // Add custom directive for auto-focus
 const vFocus = {
-	mounted: (el: HTMLElement) => el.focus()
+	mounted: (el: HTMLElement) => el.focus(),
 }
 
 function updateSurfaceDimensions(width: number, height: number) {
@@ -135,10 +139,76 @@ function handleMouseMove(e: MouseEvent) {
 		const deltaX = pixelsToCm(e.clientX - startPos.value.x) / zoom.value
 		const deltaY = pixelsToCm(e.clientY - startPos.value.y) / zoom.value
 
-
 		// Calculate new dimensions
 		let newWidth = Math.max(1, startDimensions.value.width + deltaX)
 		let newHeight = Math.max(1, startDimensions.value.height + deltaY)
+
+		// Reset snap guides
+		snapGuides.value = { vertical: null, horizontal: null }
+		isSnapping.value = false
+
+		// Check snapping for dimensions
+		const moveSpeed = Math.sqrt(deltaX * deltaX + deltaY * deltaY)
+		if (moveSpeed < 0.5) {
+			// Only snap when moving slowly
+			images.value.forEach((otherImage, otherIndex) => {
+				if (otherIndex !== draggedImageIndex.value) {
+					// Snap width
+					const widthDiff = Math.abs(newWidth - otherImage.width)
+					if (widthDiff < snapThreshold.value) {
+						newWidth = otherImage.width
+						isSnapping.value = true
+						snapGuides.value.vertical = image.position.x + otherImage.width
+					}
+
+					// Snap height
+					const heightDiff = Math.abs(newHeight - otherImage.height)
+					if (heightDiff < snapThreshold.value) {
+						newHeight = otherImage.height
+						isSnapping.value = true
+						snapGuides.value.horizontal = image.position.y + otherImage.height
+					}
+
+					// Snap to half/double width
+					const halfWidth = otherImage.width / 2
+					const doubleWidth = otherImage.width * 2
+					if (Math.abs(newWidth - halfWidth) < snapThreshold.value) {
+						newWidth = halfWidth
+						isSnapping.value = true
+						snapGuides.value.vertical = image.position.x + halfWidth
+					}
+					if (Math.abs(newWidth - doubleWidth) < snapThreshold.value) {
+						newWidth = doubleWidth
+						isSnapping.value = true
+						snapGuides.value.vertical = image.position.x + doubleWidth
+					}
+
+					// Snap to half/double height
+					const halfHeight = otherImage.height / 2
+					const doubleHeight = otherImage.height * 2
+					if (Math.abs(newHeight - halfHeight) < snapThreshold.value) {
+						newHeight = halfHeight
+						isSnapping.value = true
+						snapGuides.value.horizontal = image.position.y + halfHeight
+					}
+					if (Math.abs(newHeight - doubleHeight) < snapThreshold.value) {
+						newHeight = doubleHeight
+						isSnapping.value = true
+						snapGuides.value.horizontal = image.position.y + doubleHeight
+					}
+
+					// Snap to aspect ratio
+					const currentAspectRatio = newWidth / newHeight
+					const otherAspectRatio = otherImage.width / otherImage.height
+					const aspectRatioDiff = Math.abs(currentAspectRatio - otherAspectRatio)
+					if (aspectRatioDiff < 0.05) {
+						// Snap to aspect ratio with 5% tolerance
+						newHeight = newWidth / otherAspectRatio
+						isSnapping.value = true
+					}
+				}
+			})
+		}
 
 		// Constrain width to surface bounds
 		if (image.position.x + newWidth > surfaceWidth.value) {
@@ -374,6 +444,9 @@ function handleMouseDown(e: MouseEvent, index: number) {
 
 async function addImage() {
 	try {
+		invoke('send_to_python', {
+			filePath: '/Users/josh/Downloads/test.png',
+		})
 		const selected = await open({
 			multiple: false,
 			filters: [
@@ -509,38 +582,38 @@ async function downloadPDF() {
 	try {
 		// Create a new PDF document
 		const pdfDoc = await PDFDocument.create()
-		
+
 		// Add metadata page
 		const metadataPage = pdfDoc.addPage([800, 1000])
 		const { width, height } = metadataPage.getSize()
-		
+
 		// Save project data as text in PDF
 		const projectData = {
 			surfaceWidth: surfaceWidth.value,
 			surfaceHeight: surfaceHeight.value,
-			images: images.value.map(img => ({
+			images: images.value.map((img) => ({
 				position: img.position,
 				rotation: img.rotation,
 				scale: img.scale,
 				width: img.width,
 				height: img.height,
-				filename: img.filename
-			}))
+				filename: img.filename,
+			})),
 		}
-		
+
 		// Write project data
 		metadataPage.drawText('Project Metadata:', {
 			x: 50,
 			y: height - 50,
-			size: 14
+			size: 14,
 		})
-		
+
 		metadataPage.drawText(JSON.stringify(projectData, null, 2), {
 			x: 50,
 			y: height - 100,
 			size: 10,
 			lineHeight: 12,
-			maxWidth: width - 100
+			maxWidth: width - 100,
 		})
 
 		// Add image preview page
@@ -563,9 +636,7 @@ async function downloadPDF() {
 		for (let i = 0; i < images.value.length; i++) {
 			const imageData = images.value[i]
 			const image =
-				imageData.type === 'png'
-					? await pdfDoc.embedPng(imageData.data)
-					: await pdfDoc.embedJpg(imageData.data)
+				imageData.type === 'png' ? await pdfDoc.embedPng(imageData.data) : await pdfDoc.embedJpg(imageData.data)
 
 			// Calculate position in grid
 			const row = Math.floor(i / imagesPerRow)
@@ -588,11 +659,14 @@ async function downloadPDF() {
 			const y = pageHeight - padding - (row + 1) * imageHeight + (imageHeight - scaledHeight) / 2
 
 			// Add image info
-			imagePage.drawText(`${imageData.filename} (${Math.round(imageData.width)}×${Math.round(imageData.height)}cm)`, {
-				x: x,
-				y: y - 15,
-				size: 8
-			})
+			imagePage.drawText(
+				`${imageData.filename} (${Math.round(imageData.width)}×${Math.round(imageData.height)}cm)`,
+				{
+					x: x,
+					y: y - 15,
+					size: 8,
+				},
+			)
 
 			imagePage.drawImage(image, {
 				x,
@@ -614,7 +688,6 @@ async function downloadPDF() {
 		link.click()
 		document.body.removeChild(link)
 		URL.revokeObjectURL(url)
-
 	} catch (error) {
 		console.error('Error downloading PDF:', error)
 	}
@@ -966,13 +1039,13 @@ async function loadProject() {
 		isLoadingProject.value = true
 		const fileContent = await readFile(selected as string)
 		const projectData = JSON.parse(new TextDecoder().decode(fileContent))
-		
+
 		// Convert array data back to Uint8Array for images
 		const processedImages = projectData.images.map((img: any) => ({
 			...img,
-			data: new Uint8Array(img.data)
+			data: new Uint8Array(img.data),
 		}))
-		
+
 		// Create new project from loaded data
 		const newProject: ProjectData = {
 			id: crypto.randomUUID(),
@@ -981,7 +1054,7 @@ async function loadProject() {
 			surfaceHeight: projectData.surfaceHeight,
 			images: processedImages,
 			position: projectData.position || { x: 0, y: 0 },
-			zoom: projectData.zoom || 1
+			zoom: projectData.zoom || 1,
 		}
 		projects.value.push(newProject)
 		switchProject(newProject.id)
@@ -1238,6 +1311,27 @@ function finishRenameProject() {
 	}
 }
 
+// Add this function after other functions
+async function sendToPython() {
+	if (selectedImageIndex.value === -1) return
+
+	try {
+		isPythonProcessing.value = true
+		const image = images.value[selectedImageIndex.value]
+		console.log('Starting Python processing for:', image.filename)
+
+		const response = await invoke('send_to_python', {
+			filePath: image.filename,
+		})
+
+		console.log('Python response:', response)
+	} catch (error) {
+		console.error('Error calling Python:', error)
+	} finally {
+		isPythonProcessing.value = false
+	}
+}
+
 onMounted(() => {
 	window.addEventListener('click', handleClickOutside)
 	// Create initial project if none exists
@@ -1270,7 +1364,7 @@ onUnmounted(() => {
 		<div
 			v-if="isLoadingProject || isLoadingImage"
 			class="absolute inset-0 z-50 backdrop-blur-[2px] flex items-center justify-center"
-			style="pointer-events: none;"
+			style="pointer-events: none"
 		>
 			<div class="bg-[#2b2b2b] bg-opacity-80 rounded-lg p-6 flex flex-col items-center gap-4 shadow-lg">
 				<div class="w-8 h-8 border-4 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"></div>
@@ -1299,7 +1393,10 @@ onUnmounted(() => {
 							<span>New Surface</span>
 							<span class="text-xs text-[#5a5a5a] flex items-center gap-2">
 								<span>Ctrl+N</span>
-								<div v-if="isLoadingProject" class="w-4 h-4 border-2 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"></div>
+								<div
+									v-if="isLoadingProject"
+									class="w-4 h-4 border-2 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"
+								></div>
 							</span>
 						</button>
 						<button
@@ -1309,7 +1406,10 @@ onUnmounted(() => {
 							<span>Place Image</span>
 							<span class="text-xs text-[#5a5a5a] flex items-center gap-2">
 								<span>Ctrl+P</span>
-								<div v-if="isLoadingImage" class="w-4 h-4 border-2 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"></div>
+								<div
+									v-if="isLoadingImage"
+									class="w-4 h-4 border-2 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"
+								></div>
 							</span>
 						</button>
 						<div class="border-t border-[#3a3a3a] my-1"></div>
@@ -1464,6 +1564,22 @@ onUnmounted(() => {
 						<span class="text-sm">cm</span>
 					</div>
 				</div>
+
+				<div class="flex items-center gap-1 px-4 border-r border-[#232323]">
+					<button
+						v-if="selectedImageIndex !== -1"
+						class="px-3 py-1 hover:bg-[#3a3a3a] rounded text-sm flex items-center gap-2"
+						title="Send to Python (P)"
+						:disabled="isPythonProcessing"
+						@click="sendToPython"
+					>
+						<span>Send to Python</span>
+						<div
+							v-if="isPythonProcessing"
+							class="w-4 h-4 border-2 border-t-blue-500 border-[#3a3a3a] rounded-full animate-spin"
+						></div>
+					</button>
+				</div>
 			</div>
 		</div>
 
@@ -1529,14 +1645,14 @@ onUnmounted(() => {
 						class="viewer-container flex-1 relative"
 						:class="{
 							'cursor-grab': isSpacePressed,
-							'cursor-grabbing': isPanning
+							'cursor-grabbing': isPanning,
 						}"
 						@wheel="handleWheel"
 						@mousedown="handleViewerMouseDown"
 						@mousemove.stop="handleViewerMouseMove"
 						@mouseup.stop="handleViewerMouseUp"
 					>
-						<div 
+						<div
 							class="viewer absolute"
 							:style="{
 								width: cmToPixels(surfaceWidth) + 'px',
@@ -1553,7 +1669,7 @@ onUnmounted(() => {
 								<div v-if="isSnapping && draggedImageIndex !== -1">
 									<!-- Vertical guide -->
 									<div
-										v-if="snapGuides.vertical"
+										v-if="snapGuides.vertical !== null"
 										class="absolute border-l border-blue-500 border-dashed h-full"
 										:style="{
 											left: `${cmToPixels(snapGuides.vertical)}px`,
@@ -1562,7 +1678,7 @@ onUnmounted(() => {
 									></div>
 									<!-- Horizontal guide -->
 									<div
-										v-if="snapGuides.horizontal"
+										v-if="snapGuides.horizontal !== null"
 										class="absolute border-t border-blue-500 border-dashed w-full"
 										:style="{
 											top: `${cmToPixels(snapGuides.horizontal)}px`,

@@ -31,6 +31,9 @@
     "active": true,
     "category": "DeveloperTool",
     "copyright": "",
+    "resources": [
+      "python_scripts/*"
+    ],
     "targets": [
       "app",
       "dmg",
