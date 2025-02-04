@@ -1,0 +1,78 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"jsonFile" : "directory-.-f5ebdc15457944623624.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.10"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"name" : "",
+			"projects" : 
+			[
+				{
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "ColorConversionExamples",
+					"targetIndexes" : 
+					[
+						0,
+						1,
+						2
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 0,
+					"id" : "color_converter::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-color_converter-6b3c2675df70eff3fcf0.json",
+					"name" : "color_converter",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "color_example::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-color_example-0d50f6f3936e47753fb2.json",
+					"name" : "color_example",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "image_example::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-image_example-53311b7cb6f6fe7c706d.json",
+					"name" : "image_example",
+					"projectIndex" : 0
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "/home/emre/denemeler/tauri-test/build",
+		"source" : "/home/emre/denemeler/tauri-test"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 3
+	}
+}

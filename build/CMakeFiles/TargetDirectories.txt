@@ -1,0 +1,5 @@
+/home/emre/denemeler/tauri-test/build/CMakeFiles/color_converter.dir
+/home/emre/denemeler/tauri-test/build/CMakeFiles/color_example.dir
+/home/emre/denemeler/tauri-test/build/CMakeFiles/image_example.dir
+/home/emre/denemeler/tauri-test/build/CMakeFiles/edit_cache.dir
+/home/emre/denemeler/tauri-test/build/CMakeFiles/rebuild_cache.dir

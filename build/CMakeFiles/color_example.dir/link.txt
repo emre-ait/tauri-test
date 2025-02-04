@@ -1,0 +1,1 @@
+/usr/bin/g++ CMakeFiles/color_example.dir/examples/color_conversion_example.cpp.o -o color_example  libcolor_converter.a -llcms2 -ltiff 

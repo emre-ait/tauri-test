@@ -26,10 +26,12 @@
 	"devDependencies": {
 		"@tauri-apps/cli": "^2",
 		"@types/node": "^22.10.10",
+		"@types/vue": "^1.0.31",
 		"@types/vue-router": "^2.0.0",
 		"@typescript-eslint/eslint-plugin": "^8.21.0",
 		"@typescript-eslint/parser": "^8.21.0",
 		"@vitejs/plugin-vue": "^5.2.1",
+		"@vue/compiler-sfc": "^3.5.13",
 		"@vue/runtime-core": "^3.5.13",
 		"autoprefixer": "^10.4.20",
 		"eslint": "^9.18.0",

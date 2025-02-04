@@ -1,0 +1,2 @@
+/usr/bin/ar qc libcolor_converter.a CMakeFiles/color_converter.dir/src/color/ColorConverter.cpp.o
+/usr/bin/ranlib libcolor_converter.a
