@@ -106,14 +106,66 @@ async fn mif_reader(app_handle: AppHandle, file_path: String, layer_index: i32, 
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
+#[cxx::bridge]
+pub mod ffi {
+    unsafe extern "C++" {
+        include!("tauri-test/cpp/hello.h");
+        
+        pub fn say_hello();
+        pub fn add(a: f64, b: f64) -> f64;
+        pub fn subtract(a: f64, b: f64) -> f64;
+        pub fn multiply(a: f64, b: f64) -> f64;
+        pub fn divide(a: f64, b: f64) -> f64;
+    }
+}
+
+#[tauri::command]
+fn call_cpp_hello() {
+    ffi::say_hello();
+}
+
+#[tauri::command]
+fn cpp_calculate(operation: &str, a: f64, b: f64) -> Result<f64, String> {
+    match operation {
+        "add" => Ok(ffi::add(a, b)),
+        "subtract" => Ok(ffi::subtract(a, b)),
+        "multiply" => Ok(ffi::multiply(a, b)),
+        "divide" => {
+            if b == 0.0 {
+                Err("Division by zero!".to_string())
+            } else {
+                Ok(ffi::divide(a, b))
+            }
+        },
+        _ => Err(format!("Unknown operation: {}", operation))
+    }
+}
+
+#[tauri::command]
+fn process_file() -> String {
+    "success".to_string()
+}
+
+#[tauri::command]
+fn show_alert() -> String {
+    "Hello from Rust!".to_string()
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![calculate, process_image, mif_reader])
+        .invoke_handler(tauri::generate_handler![
+            calculate,
+            process_image,
+            mif_reader,
+            call_cpp_hello,
+            process_file,
+            show_alert,
+            cpp_calculate
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 } 
