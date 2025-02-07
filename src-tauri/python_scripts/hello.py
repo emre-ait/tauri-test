@@ -7,6 +7,7 @@ import base64
 from PIL import Image
 import io
 import time
+from mif.Mif import MIF
 
 print("Python script loaded!")
 print(f"Python path: {sys.path}")
@@ -140,4 +141,69 @@ def calculate(operation: str, a: float, b: float) -> str:
         return f"Error: {str(e)}"
 
 def show_alert():
-    return "Hello from Python!" 
+    return "Hello from Python!"
+
+def mif_reader(file_path: str, layer_index: int = 0, variant_index: int = 0, scale: int = 1) -> str:
+    """
+    Read a MIF file and convert it to base64 encoded image
+    Args:
+        file_path: Path to the MIF file
+        layer_index: Layer index (default: 0)
+        variant_index: Variant index (default: 0)
+        scale: Scale factor (default: 1)
+    Returns:
+        Base64 encoded image string or error message
+    """
+    try:
+        print(f"Opening MIF file: {file_path}")
+        print(f"Parameters: layer_index={layer_index}, variant_index={variant_index}, scale={scale}")
+        
+        # Create MIF object and open file
+        mif_image = MIF()
+        
+        # Try opening with different encodings
+        try:
+            mif_image = mif_image.open(file_path)
+        except UnicodeDecodeError:
+            print("Failed with utf-8, trying with latin-1 encoding")
+            # If utf-8 fails, try with latin-1 encoding
+            mif_image = None
+            return "Error: Failed to open MIF file - encoding error"
+        
+        if mif_image is None:
+            return "Error: Couldn't create MIF image"
+            
+        if not mif_image.isOpened:
+            return "Error: Image cannot open"
+        
+        print("MIF file opened successfully")
+        print(f"MIF Version: {mif_image.Version()}")
+        
+        try:
+            # Create numpy array from MIF data
+            print("Creating RGB image from MIF data...")
+            np_image = mif_image.createInterleavedRGB(layer_index, variant_index, scale)
+            
+            if np_image is None:
+                return "Error: Failed to create image from MIF data"
+                
+            print(f"Image shape: {np_image.shape}")
+            
+            # Convert to PIL Image
+            pil_image = Image.fromarray(np_image)
+            
+            # Convert to base64
+            buffered = io.BytesIO()
+            pil_image.save(buffered, format="PNG")
+            img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+            
+            print("Successfully converted MIF to base64 image")
+            return f"data:image/png;base64,{img_base64}"
+            
+        except Exception as e:
+            print(f"Error processing MIF data: {str(e)}")
+            return f"Error: Failed to process MIF data - {str(e)}"
+        
+    except Exception as e:
+        print(f"Error processing MIF file: {str(e)}")
+        return f"Error: {str(e)}" 

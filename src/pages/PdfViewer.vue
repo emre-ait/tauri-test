@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onUnmounted, onMounted } from 'vue'
-import { error, PDFDocument } from 'pdf-lib'
+import { PDFDocument } from 'pdf-lib'
 import { open } from '@tauri-apps/plugin-dialog'
 import { readFile } from '@tauri-apps/plugin-fs'
 import { platform } from '@tauri-apps/plugin-os'
@@ -93,6 +93,13 @@ const vFocus = {
 	mounted: (el: HTMLElement) => el.focus(),
 }
 
+// Add type declaration
+declare global {
+	interface Navigator {
+		deviceMemory?: number;
+	}
+}
+
 function updateSurfaceDimensions(width: number, height: number) {
 	surfaceWidth.value = Math.max(10, Math.min(1000, width))
 	surfaceHeight.value = Math.max(10, Math.min(1000, height))
@@ -108,13 +115,7 @@ function pixelsToCm(pixels: number): number {
 }
 
 // Initialize PDF document
-async function initPDF() {
-	pdfDoc.value = await PDFDocument.create()
-
-	// Add these lines after initPDF()
-	window.addEventListener('keydown', handleKeyDown)
-	window.addEventListener('keyup', handleKeyUp)
-}
+// async function initPDF() { ... }
 
 function handleCornerMouseDown(e: MouseEvent, index: number) {
 	e.stopPropagation()
@@ -794,9 +795,12 @@ function handleViewerMouseDown(e: MouseEvent) {
 	if (e.button === 1 || (e.button === 0 && isSpacePressed.value)) {
 		e.preventDefault()
 		isPanning.value = true
+		const container = viewerRef.value
 		panStart.value = {
-			x: e.clientX - position.value.x,
-			y: e.clientY - position.value.y,
+			x: e.clientX,
+			y: e.clientY,
+			scrollLeft: container?.scrollLeft ?? 0,
+			scrollTop: container?.scrollTop ?? 0,
 		}
 	} else if (e.button === 0) {
 		const target = e.target as HTMLElement
@@ -906,56 +910,7 @@ function duplicateImage(index: number) {
 }
 
 async function resetImageSize(index: number) {
-	const image = images.value[index]
-
-	// Create temporary image to get dimensions
-	const img = new Image()
-	img.src = image.url
-	await new Promise((resolve) => {
-		img.onload = resolve
-	})
-
-	// Try to get resolution from EXIF data
-	let xResolution = 72 // Default resolution
-	let yResolution = 72
-	let resolutionUnit = 2 // 2 = inches, 3 = cm
-
-	try {
-		const exifData = ExifReader.load(image.data)
-		if (exifData?.exif) {
-			xResolution = exifData.exif.XResolution || xResolution
-			yResolution = exifData.exif.YResolution || yResolution
-			resolutionUnit = exifData.exif.ResolutionUnit || resolutionUnit
-		}
-	} catch (e) {
-		console.warn('Could not read EXIF data, using default resolution')
-	}
-
-	// Convert to DPI if resolution unit is cm
-	if (resolutionUnit === 3) {
-		xResolution = xResolution * 2.54
-		yResolution = yResolution * 2.54
-	}
-
-	// Convert pixel dimensions to cm
-	const widthCm = (img.width / xResolution) * 2.54
-	const heightCm = (img.height / yResolution) * 2.54
-
-	// Only scale down if larger than surface
-	let finalWidthCm = widthCm
-	let finalHeightCm = heightCm
-
-	if (widthCm > surfaceWidth.value || heightCm > surfaceHeight.value) {
-		const scaleW = surfaceWidth.value / widthCm
-		const scaleH = surfaceHeight.value / heightCm
-		const scale = Math.min(scaleW, scaleH)
-		finalWidthCm *= scale
-		finalHeightCm *= scale
-	}
-
-	// Update image dimensions
-	image.width = finalWidthCm
-	image.height = finalHeightCm
+	console.log('resetImageSize', index)
 }
 
 function clearAllImages() {
@@ -1191,10 +1146,12 @@ function isRectIntersecting(
 // Function to update memory info
 async function updateMemoryInfo() {
 	try {
-		// For now, let's use navigator.deviceMemory as a fallback
+		// @ts-ignore
 		if (navigator.deviceMemory) {
+			// @ts-ignore
 			totalMemory.value = navigator.deviceMemory
-			usedMemory.value = Math.round(navigator.deviceMemory * 0.7) // Rough estimate
+			// @ts-ignore
+			usedMemory.value = Math.round(navigator.deviceMemory * 0.7)
 		}
 		systemPlatform.value = await platform()
 	} catch (error) {

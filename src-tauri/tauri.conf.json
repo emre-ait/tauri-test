@@ -11,11 +11,11 @@
   },
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build"
+    "devUrl": "http://localhost:1420"
   },
   "app": {
     "windows": [
+
       {
         "title": "tauri-test",
         "width": 800,
@@ -33,12 +33,13 @@
     "copyright": "",
     "resources": [
       "python_scripts/*"
-    ],
+	    ],
     "targets": [
       "app",
       "dmg",
       "deb"
     ],
+
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
